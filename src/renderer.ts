@@ -22,6 +22,7 @@ export class Renderer {
   private msaaTexture!: GPUTexture;
   private msaaView!: GPUTextureView;
   private timeOfDay = 0.45;
+  private seed!: number;
 
   constructor(
     private device: GPUDevice,
@@ -48,9 +49,9 @@ export class Renderer {
     this.ui.setStatus('Generating terrain heightmap...', 40);
 
     const urlSeed = new URLSearchParams(window.location.search).get('seed');
-    const seed = urlSeed ? (parseInt(urlSeed, 10) || 137) : 137;
+    this.seed = urlSeed ? (parseInt(urlSeed, 10) || 137) : 137;
 
-    const heightmap = new Heightmap(512, 512, seed);
+    const heightmap = new Heightmap(512, 512, this.seed);
     const heightData = heightmap.generate();
 
     const heightmapTex = this.device.createTexture({
@@ -99,7 +100,7 @@ export class Renderer {
     this.ui.setStatus('Initializing atmosphere...', 95);
 
     try {
-      this.atmosphere = new Atmosphere(this.device, this.format, this.globalsBuffer);
+      this.atmosphere = new Atmosphere(this.device, this.format, this.globalsBuffer, this.seed);
       await this.atmosphere.init();
       console.log('Atmosphere: Successfully integrated into renderer');
     } catch (error) {
@@ -181,7 +182,7 @@ export class Renderer {
     view.setFloat32(160, time, true);
     view.setFloat32(164, this.timeOfDay, true);
     view.setFloat32(168, SEA_LEVEL, true);
-    view.setFloat32(172, 0.0, true);
+    view.setFloat32(172, this.seed, true);
 
     this.device.queue.writeBuffer(this.globalsBuffer, 0, globalsData);
 

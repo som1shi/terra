@@ -1,3 +1,5 @@
+import atmosphereShaderSource from '../shaders/atmosphere.wgsl?raw';
+
 export class Atmosphere {
   private device: GPUDevice;
   private format: GPUTextureFormat;
@@ -21,10 +23,13 @@ export class Atmosphere {
   private readonly MIE_EXTINCTION = 4.44e-6;
   private readonly MIE_PHASE_G = 0.8;
 
-  constructor(device: GPUDevice, format: GPUTextureFormat, globalsBuffer: GPUBuffer) {
+  private seed: number;
+
+  constructor(device: GPUDevice, format: GPUTextureFormat, globalsBuffer: GPUBuffer, seed: number) {
     this.device = device;
     this.format = format;
     this.globalsBuffer = globalsBuffer;
+    this.seed = seed;
   }
 
   async init(): Promise<void> {
@@ -204,91 +209,7 @@ export class Atmosphere {
     console.log('Atmosphere: Creating render shader module...');
     const shaderModule = this.device.createShaderModule({
       label: 'Atmosphere Shader',
-      code: `
-        struct VertexOutput {
-          @builtin(position) position : vec4f,
-          @location(0) world_pos : vec3f,
-        };
-
-        struct Globals {
-          viewProj    : mat4x4f,
-          invViewProj : mat4x4f,
-          sunDir      : vec3f,
-          _pad0       : f32,
-          cameraPos   : vec3f,
-          _pad1       : f32,
-          time        : f32,
-          timeOfDay   : f32,
-          seaLevel    : f32,
-          _pad2       : f32,
-        };
-
-        @group(0) @binding(0) var<uniform> globals : Globals;
-
-        @vertex
-        fn vs_main(@location(0) position: vec3f) -> VertexOutput {
-          var out: VertexOutput;
-          // Use position directly as clip space coordinates
-          out.position = vec4f(position.xy, position.z, 1.0);
-
-          // Convert clip space back to world space for sky calculation
-          let clip_pos = vec4f(position.xy, position.z, 1.0);
-          let world_pos = globals.invViewProj * clip_pos;
-          out.world_pos = world_pos.xyz / world_pos.w;
-
-          return out;
-        }
-
-        fn compute_sky_color(world_pos: vec3f, sun_dir: vec3f) -> vec3f {
-          let view_dir = normalize(world_pos - globals.cameraPos);
-
-          // Use time of day directly for more responsive changes
-          let tod = globals.timeOfDay;
-          let sun_elevation = sun_dir.y;
-          let zenith = clamp(view_dir.y * 0.5 + 0.5, 0.0, 1.0);
-          let sun_angle = dot(view_dir, sun_dir);
-
-          // More dramatic time transitions based on time of day
-          let day_factor = smoothstep(0.25, 0.75, tod);
-          let night_factor = 1.0 - day_factor;
-
-          // Sunset/sunrise factor
-          let dawn_factor = smoothstep(0.2, 0.3, tod) * (1.0 - smoothstep(0.3, 0.4, tod));
-          let dusk_factor = smoothstep(0.7, 0.8, tod) * (1.0 - smoothstep(0.8, 0.9, tod));
-          let sunset_factor = dawn_factor + dusk_factor;
-
-          // Sky colors
-          let night_sky = vec3f(0.01, 0.01, 0.05);
-          let day_sky_horizon = vec3f(0.6, 0.7, 0.9);
-          let day_sky_zenith = vec3f(0.1, 0.3, 0.8);
-          let sunset_sky = vec3f(1.0, 0.4, 0.1);
-
-          // Base day sky
-          var sky_color = mix(day_sky_horizon, day_sky_zenith, zenith);
-
-          // Add sunset colors
-          sky_color = mix(sky_color, sunset_sky, sunset_factor * (1.0 - zenith * 0.6));
-
-          // Mix with night sky
-          sky_color = mix(night_sky, sky_color, day_factor);
-
-          // Add sun disk
-          let sun_disk = smoothstep(0.998, 0.999, sun_angle) * day_factor * 2.0;
-
-          return sky_color + vec3f(sun_disk);
-        }
-
-        @fragment
-        fn fs_main(in: VertexOutput) -> @location(0) vec4f {
-          let sky_color = compute_sky_color(in.world_pos, globals.sunDir);
-
-          // Tone mapping and gamma correction
-          let mapped = sky_color / (sky_color + vec3f(1.0));
-          let gamma_corrected = pow(mapped, vec3f(1.0 / 2.2));
-
-          return vec4f(gamma_corrected, 1.0);
-        }
-      `,
+      code: atmosphereShaderSource,
     });
     console.log('Atmosphere: Render shader module created');
 

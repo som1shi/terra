@@ -172,6 +172,8 @@ export class Renderer {
 
     this.device.queue.writeBuffer(this.globalsBuffer, 0, globalsData);
 
+    this.ocean.update(time);
+
     const encoder = this.device.createCommandEncoder({ label: 'Frame Encoder' });
 
     const renderPass = encoder.beginRenderPass({

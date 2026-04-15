@@ -113,7 +113,7 @@ fn compute_sky_color(world_pos: vec3f, sun_dir: vec3f) -> vec3f {
   let night_sky = vec3f(0.01, 0.01, 0.05);
   let day_sky_horizon = vec3f(0.6 + hue_shift, 0.7, 0.9 - hue_shift);
   let day_sky_zenith = vec3f(0.1, 0.3, 0.8 + hue_shift);
-  let sunset_sky = vec3f(1.0, 0.4, 0.1);
+  let sunset_sky = vec3f(1.0, 0.3, 0.4);
 
   // Base day sky
   var sky_color = mix(day_sky_horizon, day_sky_zenith, zenith);
@@ -127,16 +127,42 @@ fn compute_sky_color(world_pos: vec3f, sun_dir: vec3f) -> vec3f {
   // Add clouds
   let cloud_density = getCloudDensity(view_dir, seed);
   let cloud_lighting = 0.6 + sunset_factor * 0.4; // Clouds get warmer at sunset
-  let cloud_color = vec3f(cloud_lighting) * (1.0 + sunset_factor * vec3f(0.8, 0.3, 0.1));
+  let cloud_color = vec3f(cloud_lighting) * (1.0 + sunset_factor * vec3f(0.8, 0.2, 0.4));
 
-  // Only show clouds during day/sunset, fade out at night
-  let cloud_visibility = day_factor * 0.8;
+  // Show fewer clouds at night
+  let cloud_visibility = day_factor * 0.6 + 0.2;
   sky_color = mix(sky_color, cloud_color, cloud_density * cloud_visibility);
 
   // Add sun disk
   let sun_disk = smoothstep(0.998, 0.999, sun_angle) * day_factor * 2.0;
 
-  return sky_color + vec3f(sun_disk);
+  // Calculate moon position - opposite to sun
+  // Moon rises when sun sets and vice versa
+  let moon_time = tod + 0.5; // Moon is 12 hours offset from sun
+  let moon_time_wrapped = fract(moon_time); // Keep in 0-1 range
+
+  // Moon position calculation (opposite arc to sun)
+  let moon_angle_h = (moon_time_wrapped - 0.5) * 3.14159; // Horizontal angle
+  let moon_elevation = sin(moon_angle_h * 2.0) * 0.8; // Vertical position
+
+  // Moon direction vector (opposite to sun's general direction)
+  let moon_dir = vec3f(
+    -sin(moon_angle_h),
+    moon_elevation,
+    cos(moon_angle_h)
+  );
+
+  // Calculate moon visibility (only show at night)
+  let night_factor = 1.0 - day_factor;
+  let moon_angle_dot = dot(view_dir, normalize(moon_dir));
+
+  // Moon disk (smaller and dimmer than sun)
+  let moon_disk = smoothstep(0.997, 0.998, moon_angle_dot) * night_factor * 0.3;
+
+  // Moon glow around the disk
+  let moon_glow = smoothstep(0.99, 0.997, moon_angle_dot) * night_factor * 0.1;
+
+  return sky_color + vec3f(sun_disk) + vec3f(moon_disk + moon_glow);
 }
 
 @fragment

@@ -38,7 +38,9 @@ fn place_vegetation(@builtin(global_invocation_id) id: vec3u) {
     let h = textureLoad(heightTex, coord, 0).r;
     let N = normalize(textureLoad(normalTex, coord, 0).xyz * 2.0 - 1.0);
 
-    if (h < 0.003 || h > 0.28 || N.y < 0.75) { return; }
+    // 0.062 ≈ (seaLevel + snapThreshold) / HEIGHT_SCALE = (5 + 30) / 600
+    // Trees below this are either underwater or on terrain snapped below the ocean plane.
+    if (h < 0.062 || h > 0.28 || N.y < 0.75) { return; }
 
     let flow = textureLoad(smoothAccumTex, coord, 0).r;
     if (log(max(flow, 1.0)) > 2.8) { return; }

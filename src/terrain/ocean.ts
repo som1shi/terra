@@ -81,13 +81,15 @@ export class Ocean {
 
   // rgba32float packed texture: r=height, g=slope_x, b=slope_z, a=0
   private texData!: Float32Array;
+  private pipeline!: GPURenderPipeline;
+  private bindGroup!: GPUBindGroup;
 
   constructor(
-    private device:        GPUDevice,
-    private format:        GPUTextureFormat,
+    private device: GPUDevice,
+    private format: GPUTextureFormat,
     private globalsBuffer: GPUBuffer,
-    private sampleCount:   number = 4,
-  ) {}
+    private sampleCount: number = 4,
+  ) { }
 
   async init(): Promise<void> {
     this.precomputeSpectrum();
@@ -161,7 +163,7 @@ export class Ocean {
   private async createPipeline(): Promise<void> {
     const module = this.device.createShaderModule({
       label: 'Ocean Shader',
-      code:  oceanShaderSource,
+      code: oceanShaderSource,
     });
 
     const bgl = this.device.createBindGroupLayout({
@@ -192,11 +194,11 @@ export class Ocean {
         entryPoint: 'fs_main',
         targets:    [{ format: this.format }],
       },
-      primitive:    { topology: 'triangle-list', cullMode: 'none' },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: {
-        format:            'depth24plus',
+        format: 'depth24plus',
         depthWriteEnabled: true,
-        depthCompare:      'less',
+        depthCompare: 'less',
       },
       multisample: { count: this.sampleCount },
     });

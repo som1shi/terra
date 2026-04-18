@@ -1,30 +1,30 @@
 import terrainShaderSource from '../shaders/terrain.wgsl?raw';
 import normalsShaderSource from '../shaders/normals.wgsl?raw';
-import aoShaderSource      from '../shaders/ao.wgsl?raw';
+import aoShaderSource from '../shaders/ao.wgsl?raw';
 
 export class Terrain {
-  private pipeline!:         GPURenderPipeline;
-  private vertexBuffer!:     GPUBuffer;
-  private indexBuffer!:      GPUBuffer;
-  private indexCount!:       number;
-  private bindGroup!:        GPUBindGroup;
+  private pipeline!: GPURenderPipeline;
+  private vertexBuffer!: GPUBuffer;
+  private indexBuffer!: GPUBuffer;
+  private indexCount!: number;
+  private bindGroup!: GPUBindGroup;
   private heightmapSampler!: GPUSampler;
-  private normalTex!:        GPUTexture;
-  private normalSampler!:    GPUSampler;
-  private aoTex!:            GPUTexture;
-  private aoSampler!:        GPUSampler;
+  private normalTex!: GPUTexture;
+  private normalSampler!: GPUSampler;
+  private aoTex!: GPUTexture;
+  private aoSampler!: GPUSampler;
 
-  private readonly GRID         = 512;
-  private readonly WORLD_SCALE  = 4096;
+  private readonly GRID = 512;
+  private readonly WORLD_SCALE = 4096;
   private readonly HEIGHT_SCALE = 600;
 
   constructor(
-    private device:        GPUDevice,
-    private format:        GPUTextureFormat,
-    private heightmapTex:  GPUTexture,
+    private device: GPUDevice,
+    private format: GPUTextureFormat,
+    private heightmapTex: GPUTexture,
     private globalsBuffer: GPUBuffer,
-    private accumTex:      GPUTexture,
-  ) {}
+    private accumTex: GPUTexture,
+  ) { }
 
   async init(): Promise<void> {
     this.heightmapSampler = this.device.createSampler({
@@ -88,12 +88,12 @@ export class Terrain {
       layout: bgl,
       entries: [
         { binding: 0, resource: this.heightmapTex.createView() },
-        { binding: 1, resource: this.normalTex.createView()    },
+        { binding: 1, resource: this.normalTex.createView() },
       ],
     });
 
     const encoder = this.device.createCommandEncoder({ label: 'Normals Encoder' });
-    const pass    = encoder.beginComputePass({ label: 'Normals Pass' });
+    const pass = encoder.beginComputePass({ label: 'Normals Pass' });
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bg);
     pass.dispatchWorkgroups(64, 64);
@@ -131,12 +131,12 @@ export class Terrain {
       layout: bgl,
       entries: [
         { binding: 0, resource: this.heightmapTex.createView() },
-        { binding: 1, resource: this.aoTex.createView()        },
+        { binding: 1, resource: this.aoTex.createView() },
       ],
     });
 
     const encoder = this.device.createCommandEncoder({ label: 'AO Encoder' });
-    const pass    = encoder.beginComputePass({ label: 'AO Pass' });
+    const pass = encoder.beginComputePass({ label: 'AO Pass' });
     pass.setPipeline(pipeline);
     pass.setBindGroup(0, bg);
     pass.dispatchWorkgroups(64, 64);
@@ -145,7 +145,7 @@ export class Terrain {
   }
 
   private buildMesh(): void {
-    const N    = this.GRID;
+    const N = this.GRID;
     const half = this.WORLD_SCALE / 2;
 
     const vertData = new Float32Array(N * N * 4);
@@ -161,13 +161,13 @@ export class Terrain {
 
     this.vertexBuffer = this.device.createBuffer({
       label: 'Terrain Vertex Buffer',
-      size:  vertData.byteLength,
+      size: vertData.byteLength,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
     this.device.queue.writeBuffer(this.vertexBuffer, 0, vertData);
 
     const quadCount = (N - 1) * (N - 1);
-    const indices   = new Uint32Array(quadCount * 6);
+    const indices = new Uint32Array(quadCount * 6);
     let idx = 0;
     for (let j = 0; j < N - 1; j++) {
       for (let i = 0; i < N - 1; i++) {
@@ -183,7 +183,7 @@ export class Terrain {
 
     this.indexBuffer = this.device.createBuffer({
       label: 'Terrain Index Buffer',
-      size:  indices.byteLength,
+      size: indices.byteLength,
       usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
     });
     this.device.queue.writeBuffer(this.indexBuffer, 0, indices);
@@ -192,20 +192,20 @@ export class Terrain {
   private async createPipeline(): Promise<void> {
     const shaderModule = this.device.createShaderModule({
       label: 'Terrain Shader',
-      code:  terrainShaderSource,
+      code: terrainShaderSource,
     });
 
     const bgl = this.device.createBindGroupLayout({
       label: 'Terrain BGL',
       entries: [
-        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer:  { type: 'uniform'                } },
+        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
-        { binding: 2, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, sampler: { type: 'non-filtering'            } },
-        { binding: 3, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, texture: { sampleType: 'float'              } },
-        { binding: 4, visibility: GPUShaderStage.FRAGMENT,                          sampler: { type: 'filtering'                } },
-        { binding: 5, visibility: GPUShaderStage.FRAGMENT,                          texture: { sampleType: 'float'              } },
-        { binding: 6, visibility: GPUShaderStage.FRAGMENT,                          sampler: { type: 'filtering'                } },
-        { binding: 7, visibility: GPUShaderStage.FRAGMENT,                          texture: { sampleType: 'unfilterable-float' } },
+        { binding: 2, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, sampler: { type: 'non-filtering' } },
+        { binding: 3, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
       ],
     });
 
@@ -231,9 +231,9 @@ export class Terrain {
         entryPoint: 'fs_main',
         targets: [{ format: this.format }],
       },
-      primitive:    { topology: 'triangle-list', cullMode: 'back' },
+      primitive: { topology: 'triangle-list', cullMode: 'back' },
       depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
-      multisample:  { count: 4 },
+      multisample: { count: 4 },
     });
   }
 
@@ -244,12 +244,12 @@ export class Terrain {
       entries: [
         { binding: 0, resource: { buffer: this.globalsBuffer } },
         { binding: 1, resource: this.heightmapTex.createView() },
-        { binding: 2, resource: this.heightmapSampler          },
-        { binding: 3, resource: this.normalTex.createView()    },
-        { binding: 4, resource: this.normalSampler             },
-        { binding: 5, resource: this.aoTex.createView()        },
-        { binding: 6, resource: this.aoSampler                 },
-        { binding: 7, resource: this.accumTex.createView()     },
+        { binding: 2, resource: this.heightmapSampler },
+        { binding: 3, resource: this.normalTex.createView() },
+        { binding: 4, resource: this.normalSampler },
+        { binding: 5, resource: this.aoTex.createView() },
+        { binding: 6, resource: this.aoSampler },
+        { binding: 7, resource: this.accumTex.createView() },
       ],
     });
   }
@@ -264,6 +264,6 @@ export class Terrain {
     pass.drawIndexed(this.indexCount);
   }
 
-  getWorldScale():  number { return this.WORLD_SCALE; }
+  getWorldScale(): number { return this.WORLD_SCALE; }
   getHeightScale(): number { return this.HEIGHT_SCALE; }
 }

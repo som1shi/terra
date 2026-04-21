@@ -8,7 +8,11 @@ struct Globals {
     time        : f32,
     timeOfDay   : f32,
     seaLevel    : f32,
-    _pad2       : f32,
+    seed        : f32,
+    fogDensity  : f32,
+    _fpad0      : f32,
+    _fpad1      : f32,
+    _fpad2      : f32,
 };
 
 @group(0) @binding(0) var<uniform> globals : Globals;
@@ -60,7 +64,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.uv        = uv;
 
     let dist       = length(world_pos - globals.cameraPos);
-    out.fog_factor = 1.0 - exp(-dist * 0.00005);
+    out.fog_factor = 1.0 - exp(-dist * globals.fogDensity);
 
     return out;
 }

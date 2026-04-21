@@ -5,9 +5,9 @@ import { Heightmap } from './terrain/heightmap';
 import { ErosionSystem } from './terrain/erosion';
 import { Vegetation } from './terrain/vegetation';
 import { Ocean, SEA_LEVEL } from './terrain/ocean';
-import { Atmosphere } from './atmosphere/atmosphere';
+import { Atmosphere, type ClimatePreset } from './atmosphere/atmosphere';
 
-export const GLOBALS_BUFFER_SIZE = 176;
+export const GLOBALS_BUFFER_SIZE = 192;
 
 export class Renderer {
   private camera: Camera;
@@ -21,7 +21,8 @@ export class Renderer {
   private atmosphere!: Atmosphere;
   private msaaTexture!: GPUTexture;
   private msaaView!: GPUTextureView;
-  private timeOfDay = 0.45;
+  private timeOfDay  = 0.45;
+  private fogDensity = 0.00005;
   private seed!: number;
 
   constructor(
@@ -145,6 +146,9 @@ export class Renderer {
     this.timeOfDay = tod;
   }
 
+  setFogDensity(v: number): void           { this.fogDensity = v; }
+  setClimatePreset(p: ClimatePreset): void { this.atmosphere?.setPreset(p); }
+
   getCameraPosition(): [number, number, number] {
     return this.camera.position;
   }
@@ -182,7 +186,8 @@ export class Renderer {
     view.setFloat32(160, time, true);
     view.setFloat32(164, this.timeOfDay, true);
     view.setFloat32(168, SEA_LEVEL, true);
-    view.setFloat32(172, this.seed, true);
+    view.setFloat32(172, this.seed,       true);
+    view.setFloat32(176, this.fogDensity, true);
 
     this.device.queue.writeBuffer(this.globalsBuffer, 0, globalsData);
 

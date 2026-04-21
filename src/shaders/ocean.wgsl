@@ -11,7 +11,11 @@ struct Globals {
     time        : f32,
     timeOfDay   : f32,
     seaLevel    : f32,
-    _pad2       : f32,
+    seed        : f32,
+    fogDensity  : f32,
+    _fpad0      : f32,
+    _fpad1      : f32,
+    _fpad2      : f32,
 };
 
 @group(0) @binding(0) var<uniform> globals  : Globals;
@@ -148,7 +152,7 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
 
     // Distance fog
     let dist     = length(in.world_pos - globals.cameraPos);
-    let fogFac   = 1.0 - exp(-dist * 0.00005);
+    let fogFac   = 1.0 - exp(-dist * globals.fogDensity);
     let fogColor = skyColor(normalize(in.world_pos - globals.cameraPos), sunDir);
     color        = mix(color, fogColor, clamp(fogFac, 0.0, 1.0));
 

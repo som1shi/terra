@@ -8,7 +8,11 @@ struct Globals {
     time        : f32,
     timeOfDay   : f32,
     seaLevel    : f32,
-    _pad2       : f32,
+    seed        : f32,
+    fogDensity  : f32,
+    _fpad0      : f32,
+    _fpad1      : f32,
+    _fpad2      : f32,
 };
 
 @group(0) @binding(0) var<uniform>       globals   : Globals;
@@ -25,6 +29,7 @@ struct VertOut {
     @location(0)       uv       : vec2f,
     @location(1)       localY   : f32,
     @location(2)       worldPos : vec3f,
+    @location(3)       fogFactor: f32,
 };
 
 @vertex
@@ -65,7 +70,16 @@ fn vs_main(in: VertIn) -> VertOut {
     out.uv       = in.uv;
     out.localY   = in.localPos.y;
     out.worldPos = worldPos;
+    let _dist      = length(worldPos - globals.cameraPos);
+    out.fogFactor  = 1.0 - exp(-_dist * globals.fogDensity);
     return out;
+}
+
+fn grassFogColor(sunDir: vec3f) -> vec3f {
+    let e = clamp(sunDir.y, -0.1, 1.0);
+    let d = smoothstep(-0.05, 0.15, e);
+    return mix(vec3f(0.01, 0.01, 0.05),
+               mix(vec3f(0.4, 0.65, 0.9), vec3f(0.08, 0.25, 0.72), 0.5), d);
 }
 
 @fragment
@@ -87,6 +101,7 @@ fn fs_main(in: VertOut) -> @location(0) vec4f {
     let wrapped = clamp((NdotL + 0.5) / 1.5, 0.0, 1.0);
     let diffuse = wrapped * sunColor * 1.1;
 
-    let color = baseColor * (ambient + diffuse);
+    var color = baseColor * (ambient + diffuse);
+    color = mix(color, grassFogColor(sunDir), clamp(in.fogFactor, 0.0, 1.0));
     return vec4f(color, 1.0);
 }

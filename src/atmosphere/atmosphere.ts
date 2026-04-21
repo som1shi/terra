@@ -1,324 +1,211 @@
 import atmosphereShaderSource from '../shaders/atmosphere.wgsl?raw';
 
+export type ClimatePreset = 'temperate' | 'arid' | 'tropical' | 'arctic' | 'stormy';
+export const CLIMATE_PRESETS: ClimatePreset[] = ['temperate','arid','tropical','arctic','stormy'];
+
+const PRESET_INDEX: Record<ClimatePreset, number> = {
+  temperate: 0, arid: 1, tropical: 2, arctic: 3, stormy: 4,
+};
+
 export class Atmosphere {
   private device: GPUDevice;
   private format: GPUTextureFormat;
   private globalsBuffer: GPUBuffer;
 
-  // Precomputed lookup textures
   private transmittanceTexture!: GPUTexture;
   private scatteringTexture!: GPUTexture;
   private irradianceTexture!: GPUTexture;
 
-  // Render resources
   private pipeline!: GPURenderPipeline;
   private bindGroup!: GPUBindGroup;
+  private climateBG!: GPUBindGroup;
+  private climateBuffer!: GPUBuffer;
   private vertexBuffer!: GPUBuffer;
+  private indexBuffer!: GPUBuffer;
+  private indexCount!: number;
 
-  // Physical constants (Bruneton parameters)
-  private readonly EARTH_RADIUS = 6371000.0; // meters
-  private readonly ATMOSPHERE_HEIGHT = 100000.0; // meters
-  private readonly RAYLEIGH_SCATTERING = [5.802e-6, 13.558e-6, 33.1e-6]; // RGB coefficients
-  private readonly MIE_SCATTERING = 3.996e-6;
-  private readonly MIE_EXTINCTION = 4.44e-6;
-  private readonly MIE_PHASE_G = 0.8;
-
+  private currentPreset: ClimatePreset = 'temperate';
   private seed: number;
 
   constructor(device: GPUDevice, format: GPUTextureFormat, globalsBuffer: GPUBuffer, seed: number) {
-    this.device = device;
-    this.format = format;
+    this.device        = device;
+    this.format        = format;
     this.globalsBuffer = globalsBuffer;
-    this.seed = seed;
+    this.seed          = seed;
   }
+
+  // ── Public API ───────────────────────────────────────────────────────────────
+
+  setPreset(preset: ClimatePreset): void {
+    this.currentPreset = preset;
+    this.uploadClimateBuffer();
+  }
+
+  getPreset(): ClimatePreset { return this.currentPreset; }
+
+  // ── Init ─────────────────────────────────────────────────────────────────────
 
   async init(): Promise<void> {
-    console.log('Atmosphere: Starting initialization...');
-    try {
-      console.log('Atmosphere: Creating precomputed textures...');
-      await this.createPrecomputedTextures();
-      console.log('Atmosphere: Precomputed textures created successfully');
-
-      console.log('Atmosphere: Creating render pipeline...');
-      await this.createRenderPipeline();
-      console.log('Atmosphere: Render pipeline created successfully');
-
-      console.log('Atmosphere: Creating sky dome...');
-      this.createSkyDome();
-      console.log('Atmosphere: Sky dome created successfully');
-
-      console.log('Atmosphere: Initialization complete');
-    } catch (error) {
-      console.error('Atmosphere: Initialization failed:', error);
-      throw error;
-    }
+    this.createClimateBuffer();
+    await this.createPrecomputedTextures();
+    await this.createRenderPipeline();
+    this.createSkyDome();
   }
 
+  private createClimateBuffer(): void {
+    this.climateBuffer = this.device.createBuffer({
+      label: 'Climate Uniform', size: 16,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.uploadClimateBuffer();
+  }
+
+  private uploadClimateBuffer(): void {
+    const data = new Float32Array(4);
+    data[0] = PRESET_INDEX[this.currentPreset];
+    this.device.queue.writeBuffer(this.climateBuffer, 0, data);
+  }
+
+  // ── Precompute ───────────────────────────────────────────────────────────────
+
   private async createPrecomputedTextures(): Promise<void> {
-    console.log('Atmosphere: Creating transmittance texture...');
     this.transmittanceTexture = this.device.createTexture({
-      label: 'Atmosphere Transmittance',
-      size: { width: 256, height: 64 },
+      label: 'Atmosphere Transmittance', size: { width: 256, height: 64 },
       format: 'rg16float',
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
     });
-
-    console.log('Atmosphere: Creating scattering texture...');
     this.scatteringTexture = this.device.createTexture({
-      label: 'Atmosphere Scattering',
-      size: { width: 256, height: 128, depthOrArrayLayers: 32 },
-      format: 'rgba16float',
-      dimension: '3d',
+      label: 'Atmosphere Scattering', size: { width: 256, height: 128, depthOrArrayLayers: 32 },
+      format: 'rgba16float', dimension: '3d',
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
     });
-
-    console.log('Atmosphere: Creating irradiance texture...');
     this.irradianceTexture = this.device.createTexture({
-      label: 'Atmosphere Irradiance',
-      size: { width: 64, height: 16 },
+      label: 'Atmosphere Irradiance', size: { width: 64, height: 16 },
       format: 'rgba16float',
       usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
     });
-
-    console.log('Atmosphere: Starting precomputation...');
     await this.precomputeAtmosphere();
-    console.log('Atmosphere: Precomputation complete');
   }
 
   private async precomputeAtmosphere(): Promise<void> {
-    console.log('Atmosphere: Creating compute shader module...');
     const computeShader = this.device.createShaderModule({
-      label: 'Atmosphere Precompute Shader',
+      label: 'Atmosphere Precompute',
       code: `
-        struct AtmosphereParams {
-          earth_radius: f32,
-          atmosphere_height: f32,
-          rayleigh_scattering: vec3<f32>,
-          mie_scattering: f32,
-          mie_extinction: f32,
-          mie_phase_g: f32,
-        };
-
-        @group(0) @binding(0) var transmittance_tex: texture_storage_2d<rg16float, write>;
-        @group(0) @binding(1) var scattering_tex: texture_storage_3d<rgba16float, write>;
-        @group(0) @binding(2) var irradiance_tex: texture_storage_2d<rgba16float, write>;
-
-        const EARTH_RADIUS = 6371000.0;
-        const ATMOSPHERE_HEIGHT = 100000.0;
-        const RAYLEIGH_SCATTERING = vec3<f32>(5.802e-6, 13.558e-6, 33.1e-6);
-        const MIE_SCATTERING = 3.996e-6;
-        const MIE_EXTINCTION = 4.44e-6;
-        const MIE_PHASE_G = 0.8;
-
-        fn atmosphere_height_at_radius(r: f32) -> f32 {
-          return sqrt(r * r - EARTH_RADIUS * EARTH_RADIUS);
+        @group(0) @binding(0) var transmittance_tex : texture_storage_2d<rg16float, write>;
+        @group(0) @binding(1) var scattering_tex    : texture_storage_3d<rgba16float, write>;
+        @group(0) @binding(2) var irradiance_tex    : texture_storage_2d<rgba16float, write>;
+        const EARTH_RADIUS = 6371000.0; const ATMOSPHERE_HEIGHT = 100000.0;
+        fn atmos_h(r: f32) -> f32 { return sqrt(max(r*r - EARTH_RADIUS*EARTH_RADIUS, 0.0)); }
+        fn transmittance(r: f32, mu: f32) -> vec2<f32> {
+          let atop = EARTH_RADIUS + ATMOSPHERE_HEIGHT;
+          let d = max(0.0, sqrt(max(r*r*(mu*mu-1.0)+atop*atop, 0.0)) - r*mu);
+          return vec2<f32>(exp(-exp(-atmos_h(r)/8000.0)*d), exp(-exp(-atmos_h(r)/1200.0)*d));
         }
-
-        fn optical_depth_rayleigh(r: f32, mu: f32, d: f32) -> f32 {
-          // Simplified optical depth calculation for Rayleigh scattering
-          let h = atmosphere_height_at_radius(r);
-          let scale_height = 8000.0;
-          return exp(-h / scale_height) * d;
-        }
-
-        fn optical_depth_mie(r: f32, mu: f32, d: f32) -> f32 {
-          // Simplified optical depth calculation for Mie scattering
-          let h = atmosphere_height_at_radius(r);
-          let scale_height = 1200.0;
-          return exp(-h / scale_height) * d;
-        }
-
-        fn compute_transmittance(r: f32, mu: f32) -> vec2<f32> {
-          // Distance to atmosphere top
-          let atmosphere_top = EARTH_RADIUS + ATMOSPHERE_HEIGHT;
-          let discriminant = r * r * (mu * mu - 1.0) + atmosphere_top * atmosphere_top;
-          let d = max(0.0, sqrt(discriminant) - r * mu);
-
-          // Compute optical depths
-          let rayleigh_optical_depth = optical_depth_rayleigh(r, mu, d);
-          let mie_optical_depth = optical_depth_mie(r, mu, d);
-
-          // Transmittance
-          let rayleigh_transmittance = exp(-rayleigh_optical_depth);
-          let mie_transmittance = exp(-mie_optical_depth);
-
-          return vec2<f32>(rayleigh_transmittance, mie_transmittance);
-        }
-
-        @compute @workgroup_size(8, 8)
+        @compute @workgroup_size(8,8)
         fn compute_transmittance_main(@builtin(global_invocation_id) id: vec3<u32>) {
-          let tex_size = textureDimensions(transmittance_tex);
-          if (id.x >= tex_size.x || id.y >= tex_size.y) { return; }
-
-          // Map texture coordinates to atmosphere parameters
-          let u_r = (f32(id.x) + 0.5) / f32(tex_size.x);
-          let u_mu = (f32(id.y) + 0.5) / f32(tex_size.y);
-
-          // Convert to radius and cosine of zenith angle
-          let r = EARTH_RADIUS + u_r * ATMOSPHERE_HEIGHT;
-          let mu = 2.0 * u_mu - 1.0;
-
-          let transmittance = compute_transmittance(r, mu);
-          textureStore(transmittance_tex, vec2<i32>(id.xy), vec4<f32>(transmittance, 0.0, 1.0));
+          let sz = textureDimensions(transmittance_tex);
+          if (id.x >= sz.x || id.y >= sz.y) { return; }
+          let r = EARTH_RADIUS + (f32(id.x)+0.5)/f32(sz.x)*ATMOSPHERE_HEIGHT;
+          let mu = 2.0*(f32(id.y)+0.5)/f32(sz.y) - 1.0;
+          textureStore(transmittance_tex, vec2<i32>(id.xy), vec4<f32>(transmittance(r,mu), 0.0, 1.0));
         }
       `,
     });
-    console.log('Atmosphere: Compute shader module created');
-
-    console.log('Atmosphere: Creating compute pipeline...');
-    const computePipeline = this.device.createComputePipeline({
-      label: 'Atmosphere Precompute Pipeline',
-      layout: 'auto',
-      compute: {
-        module: computeShader,
-        entryPoint: 'compute_transmittance_main',
-      },
+    const pipeline = this.device.createComputePipeline({
+      label: 'Atmos Precompute', layout: 'auto',
+      compute: { module: computeShader, entryPoint: 'compute_transmittance_main' },
     });
-    console.log('Atmosphere: Compute pipeline created');
-
-    const bindGroup = this.device.createBindGroup({
-      label: 'Atmosphere Precompute Bind Group',
-      layout: computePipeline.getBindGroupLayout(0),
+    const bg = this.device.createBindGroup({
+      label: 'Atmos Precompute BG', layout: pipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: this.transmittanceTexture.createView() },
-        { binding: 1, resource: this.scatteringTexture.createView() },
-        { binding: 2, resource: this.irradianceTexture.createView() },
+        { binding: 1, resource: this.scatteringTexture.createView()    },
+        { binding: 2, resource: this.irradianceTexture.createView()    },
       ],
     });
-
-    // Dispatch precomputation
-    const encoder = this.device.createCommandEncoder({ label: 'Atmosphere Precompute' });
-    const pass = encoder.beginComputePass();
-
-    pass.setPipeline(computePipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.dispatchWorkgroups(
-      Math.ceil(256 / 8),
-      Math.ceil(64 / 8),
-      1
-    );
-
+    const enc = this.device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    pass.setPipeline(pipeline); pass.setBindGroup(0, bg);
+    pass.dispatchWorkgroups(Math.ceil(256/8), Math.ceil(64/8));
     pass.end();
-    this.device.queue.submit([encoder.finish()]);
-
-    // Wait for completion
+    this.device.queue.submit([enc.finish()]);
     await this.device.queue.onSubmittedWorkDone();
   }
 
-  private async createRenderPipeline(): Promise<void> {
-    console.log('Atmosphere: Creating render shader module...');
-    const shaderModule = this.device.createShaderModule({
-      label: 'Atmosphere Shader',
-      code: atmosphereShaderSource,
-    });
-    console.log('Atmosphere: Render shader module created');
+  // ── Render pipeline ──────────────────────────────────────────────────────────
 
-    console.log('Atmosphere: Creating render pipeline...');
+  private async createRenderPipeline(): Promise<void> {
+    const shaderModule = this.device.createShaderModule({
+      label: 'Atmosphere Shader', code: atmosphereShaderSource,
+    });
+
+    const bgl0 = this.device.createBindGroupLayout({
+      label: 'Atmos BGL0',
+      entries: [{ binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }],
+    });
+    const bgl1 = this.device.createBindGroupLayout({
+      label: 'Atmos BGL1 Climate',
+      entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }],
+    });
+
     this.pipeline = this.device.createRenderPipeline({
       label: 'Atmosphere Pipeline',
-      layout: 'auto',
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [bgl0, bgl1] }),
       vertex: {
-        module: shaderModule,
-        entryPoint: 'vs_main',
-        buffers: [{
-          arrayStride: 12,
-          attributes: [{
-            format: 'float32x3',
-            offset: 0,
-            shaderLocation: 0,
-          }],
-        }],
+        module: shaderModule, entryPoint: 'vs_main',
+        buffers: [{ arrayStride: 12, attributes: [{ format: 'float32x3', offset: 0, shaderLocation: 0 }] }],
       },
       fragment: {
-        module: shaderModule,
-        entryPoint: 'fs_main',
-        targets: [{
-          format: this.format,
-          blend: {
-            color: {
-              srcFactor: 'one',
-              dstFactor: 'zero',
-            },
-            alpha: {
-              srcFactor: 'one',
-              dstFactor: 'zero',
-            },
-          },
-        }],
+        module: shaderModule, entryPoint: 'fs_main',
+        targets: [{ format: this.format, blend: {
+          color: { srcFactor: 'one', dstFactor: 'zero' },
+          alpha: { srcFactor: 'one', dstFactor: 'zero' },
+        }}],
       },
-      primitive: {
-        topology: 'triangle-list',
-        cullMode: 'back',
-      },
-      depthStencil: {
-        format: 'depth24plus',
-        depthWriteEnabled: false,
-        depthCompare: 'less-equal',
-      },
-      multisample: {
-        count: 4,
-      },
+      primitive:    { topology: 'triangle-list', cullMode: 'back' },
+      depthStencil: { format: 'depth24plus', depthWriteEnabled: false, depthCompare: 'less-equal' },
+      multisample:  { count: 4 },
     });
-    console.log('Atmosphere: Render pipeline created');
 
-    console.log('Atmosphere: Creating bind group...');
     this.bindGroup = this.device.createBindGroup({
-      label: 'Atmosphere Bind Group',
-      layout: this.pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: this.globalsBuffer } },
-      ],
+      label: 'Atmos BG0', layout: bgl0,
+      entries: [{ binding: 0, resource: { buffer: this.globalsBuffer } }],
     });
-    console.log('Atmosphere: Bind group created');
+    this.climateBG = this.device.createBindGroup({
+      label: 'Atmos BG1 Climate', layout: bgl1,
+      entries: [{ binding: 0, resource: { buffer: this.climateBuffer } }],
+    });
   }
 
+  // ── Sky quad ─────────────────────────────────────────────────────────────────
+
   private createSkyDome(): void {
-    // Create fullscreen quad for sky rendering (simpler than sphere)
-    const vertices = [
-      // Position coordinates for a large quad that covers the screen
-      -1.0, -1.0, 0.999, // Bottom-left, at far plane
-       1.0, -1.0, 0.999, // Bottom-right, at far plane
-       1.0,  1.0, 0.999, // Top-right, at far plane
-      -1.0,  1.0, 0.999, // Top-left, at far plane
-    ];
-
-    // Two triangles forming a quad
-    const indices = [
-      0, 1, 2,  // First triangle
-      0, 2, 3   // Second triangle
-    ];
-
+    const verts   = new Float32Array([-1,-1,0.999, 1,-1,0.999, 1,1,0.999, -1,1,0.999]);
+    const indices = new Uint32Array([0,1,2, 0,2,3]);
     this.vertexBuffer = this.device.createBuffer({
-      label: 'Sky Dome Vertices',
-      size: vertices.length * 4,
-      usage: GPUBufferUsage.VERTEX,
-      mappedAtCreation: true,
+      label: 'Sky Quad Verts', size: verts.byteLength,
+      usage: GPUBufferUsage.VERTEX, mappedAtCreation: true,
     });
-    new Float32Array(this.vertexBuffer.getMappedRange()).set(vertices);
+    new Float32Array(this.vertexBuffer.getMappedRange()).set(verts);
     this.vertexBuffer.unmap();
-
-    // Store index count for rendering
-    this.indexCount = indices.length;
-
     this.indexBuffer = this.device.createBuffer({
-      label: 'Sky Dome Indices',
-      size: indices.length * 4,
-      usage: GPUBufferUsage.INDEX,
-      mappedAtCreation: true,
+      label: 'Sky Quad Indices', size: indices.byteLength,
+      usage: GPUBufferUsage.INDEX, mappedAtCreation: true,
     });
     new Uint32Array(this.indexBuffer.getMappedRange()).set(indices);
     this.indexBuffer.unmap();
+    this.indexCount = indices.length;
   }
 
-  private indexCount!: number;
-  private indexBuffer!: GPUBuffer;
+  // ── Encode ───────────────────────────────────────────────────────────────────
 
-  encode(renderPass: GPURenderPassEncoder): void {
-    renderPass.setPipeline(this.pipeline);
-    renderPass.setBindGroup(0, this.bindGroup);
-    renderPass.setVertexBuffer(0, this.vertexBuffer);
-    renderPass.setIndexBuffer(this.indexBuffer, 'uint32');
-    renderPass.drawIndexed(this.indexCount);
+  encode(pass: GPURenderPassEncoder): void {
+    pass.setPipeline(this.pipeline);
+    pass.setBindGroup(0, this.bindGroup);
+    pass.setBindGroup(1, this.climateBG);
+    pass.setVertexBuffer(0, this.vertexBuffer);
+    pass.setIndexBuffer(this.indexBuffer, 'uint32');
+    pass.drawIndexed(this.indexCount);
   }
 
   destroy(): void {
@@ -327,5 +214,6 @@ export class Atmosphere {
     this.irradianceTexture?.destroy();
     this.vertexBuffer?.destroy();
     this.indexBuffer?.destroy();
+    this.climateBuffer?.destroy();
   }
 }

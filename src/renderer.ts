@@ -6,6 +6,7 @@ import { ErosionSystem } from './terrain/erosion';
 import { Vegetation } from './terrain/vegetation';
 import { Ocean, SEA_LEVEL } from './terrain/ocean';
 import { Atmosphere } from './atmosphere/atmosphere';
+import { Flock } from './birds/flock';
 
 export const GLOBALS_BUFFER_SIZE = 176;
 
@@ -19,6 +20,7 @@ export class Renderer {
   private ocean!: Ocean;
   private vegetation!: Vegetation;
   private atmosphere!: Atmosphere;
+  private flock!: Flock;
   private msaaTexture!: GPUTexture;
   private msaaView!: GPUTextureView;
   private timeOfDay = 0.45;
@@ -97,7 +99,7 @@ export class Renderer {
     await this.vegetation.init();
     this.vegetation.dispatchCompute();
 
-    this.ui.setStatus('Initializing atmosphere...', 95);
+    this.ui.setStatus('Initializing atmosphere...', 93);
 
     try {
       this.atmosphere = new Atmosphere(this.device, this.format, this.globalsBuffer, this.seed);
@@ -107,6 +109,10 @@ export class Renderer {
       console.error('Renderer: Failed to initialize atmosphere:', error);
       throw error;
     }
+
+    this.ui.setStatus('Spawning birds...', 97);
+    this.flock = new Flock(this.device, this.format, this.globalsBuffer, 4);
+    await this.flock.initGPU();
 
     this.ui.setStatus('Ready!', 100);
   }
@@ -187,6 +193,7 @@ export class Renderer {
     this.device.queue.writeBuffer(this.globalsBuffer, 0, globalsData);
 
     this.ocean.update(time);
+    this.flock.update(dt);
 
     const encoder = this.device.createCommandEncoder({ label: 'Frame Encoder' });
 
@@ -211,6 +218,7 @@ export class Renderer {
     this.terrain.encode(renderPass);
     this.ocean.encode(renderPass);
     this.vegetation.encode(renderPass);
+    this.flock.encode(renderPass);
 
     renderPass.end();
     this.device.queue.submit([encoder.finish()]);

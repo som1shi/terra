@@ -155,7 +155,7 @@ export class Renderer {
     const theta = this.timeOfDay * Math.PI * 2 - Math.PI * 0.5;
     const sunY = Math.sin(theta);
     const sunX = Math.cos(theta) * 0.5;
-    const sunZ = -Math.abs(Math.cos(theta)) * 0.866;
+    const sunZ = -Math.cos(theta) * 0.866;
     const sunLen = Math.sqrt(sunX * sunX + sunY * sunY + sunZ * sunZ);
 
     const globalsData = new ArrayBuffer(GLOBALS_BUFFER_SIZE);

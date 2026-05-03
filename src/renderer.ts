@@ -7,7 +7,7 @@ import { Vegetation } from './terrain/vegetation';
 import { Ocean, SEA_LEVEL } from './terrain/ocean';
 import { Atmosphere } from './atmosphere/atmosphere';
 
-export const GLOBALS_BUFFER_SIZE = 176;
+export const GLOBALS_BUFFER_SIZE = 192;
 
 export class Renderer {
   private camera: Camera;
@@ -183,12 +183,14 @@ export class Renderer {
     view.setFloat32(164, this.timeOfDay, true);
     view.setFloat32(168, SEA_LEVEL, true);
     view.setFloat32(172, this.seed, true);
+    view.setFloat32(176, this.canvas.width, true);
+    view.setFloat32(180, this.canvas.height, true);
 
     this.device.queue.writeBuffer(this.globalsBuffer, 0, globalsData);
 
-    this.ocean.update(time);
-
     const encoder = this.device.createCommandEncoder({ label: 'Frame Encoder' });
+
+    this.ocean.encodeCompute(encoder);
 
     const renderPass = encoder.beginRenderPass({
       label: 'Main Render Pass',

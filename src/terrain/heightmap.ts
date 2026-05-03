@@ -44,14 +44,14 @@ class PermutationTable {
     const u = fade(xf);
     const v = fade(yf);
 
-    const aa = this.p[this.p[xi]     + yi];
-    const ab = this.p[this.p[xi]     + yi + 1];
+    const aa = this.p[this.p[xi] + yi];
+    const ab = this.p[this.p[xi] + yi + 1];
     const ba = this.p[this.p[xi + 1] + yi];
     const bb = this.p[this.p[xi + 1] + yi + 1];
 
     return lerp(
-      lerp(grad(aa, xf,   yf  ), grad(ba, xf-1, yf  ), u),
-      lerp(grad(ab, xf,   yf-1), grad(bb, xf-1, yf-1), u),
+      lerp(grad(aa, xf, yf), grad(ba, xf - 1, yf), u),
+      lerp(grad(ab, xf, yf - 1), grad(bb, xf - 1, yf - 1), u),
       v
     );
   }
@@ -67,11 +67,11 @@ export class Heightmap {
   generate(): Float32Array<ArrayBuffer> {
     const perm = new PermutationTable(this.seed);
 
-    const octaves       = 7;
-    const lacunarity    = 2.0;
-    const persistence   = 0.40;
+    const octaves = 7;
+    const lacunarity = 2.0;
+    const persistence = 0.40;
     const baseFrequency = 1.2;
-    const sharpness     = 1.5;
+    const sharpness = 1.5;
 
     const cx = this.width / 2;
     const cy = this.height / 2;
@@ -85,23 +85,23 @@ export class Heightmap {
         const nx = (x / this.width) * 4.0;
         const ny = (y / this.height) * 4.0;
 
-        let val    = 0;
-        let amp    = 1.0;
-        let freq   = baseFrequency;
+        let val = 0;
+        let amp = 1.0;
+        let freq = baseFrequency;
         let weight = 1.0;
 
         for (let o = 0; o < octaves; o++) {
-          const n    = perm.noise2D(nx * freq, ny * freq);
+          const n = perm.noise2D(nx * freq, ny * freq);
           let signal = 1.0 - Math.abs(n);
-          signal     = Math.pow(signal, sharpness);
-          val       += amp * signal * weight;
-          weight     = Math.min(1.0, signal * 2.0);
-          amp       *= persistence;
-          freq      *= lacunarity;
+          signal = Math.pow(signal, sharpness);
+          val += amp * signal * weight;
+          weight = Math.min(1.0, signal * 2.0);
+          amp *= persistence;
+          freq *= lacunarity;
         }
 
         const warpFreq = 0.55;
-        const warpAmt  = 0.38;
+        const warpAmt = 0.38;
         const wx = perm.noise2D(nx * warpFreq + 3.7, ny * warpFreq + 1.4) * warpAmt * maxDist;
         const wy = perm.noise2D(nx * warpFreq + 8.1, ny * warpFreq + 6.2) * warpAmt * maxDist;
         const dx = (x - cx) + wx;
@@ -130,7 +130,7 @@ export class Heightmap {
     const w = this.width;
     const h = this.height;
     const tmp = new Float32Array(w * h);
-    const K = [1,4,7,4,1, 4,16,26,16,4, 7,26,41,26,7, 4,16,26,16,4, 1,4,7,4,1];
+    const K = [1, 4, 7, 4, 1, 4, 16, 26, 16, 4, 7, 26, 41, 26, 7, 4, 16, 26, 16, 4, 1, 4, 7, 4, 1];
     const Ksum = K.reduce((a, b) => a + b, 0);
 
     for (let pass = 0; pass < 1; pass++) {

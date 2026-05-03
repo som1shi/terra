@@ -9,6 +9,8 @@ struct Globals {
     timeOfDay   : f32,
     seaLevel    : f32,
     _pad2       : f32,
+    resolution  : vec2f,
+    _pad3       : vec2f,
 };
 
 @group(0) @binding(0) var<uniform>       globals   : Globals;

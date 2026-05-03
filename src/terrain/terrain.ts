@@ -24,7 +24,7 @@ export class Terrain {
     private heightmapTex: GPUTexture,
     private globalsBuffer: GPUBuffer,
     private accumTex: GPUTexture,
-  ) { }
+  ) {}
 
   async init(): Promise<void> {
     this.heightmapSampler = this.device.createSampler({

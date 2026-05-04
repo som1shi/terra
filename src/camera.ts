@@ -249,4 +249,10 @@ export class Camera {
   getInverseViewProj(): Float32Array {
     return mat4Invert(this._viewProjMatrix);
   }
+
+  getInverseRotOnlyViewProj(): Float32Array {
+    const rv = new Float32Array(this._viewMatrix);
+    rv[12] = 0; rv[13] = 0; rv[14] = 0;
+    return mat4Invert(mat4Multiply(this._projMatrix, rv));
+  }
 }

@@ -31,6 +31,8 @@ const MOUNTAIN_LOW         = 180.0;  // below this: fly over
 const MOUNTAIN_HIGH        = 260.0;  // above this: go around; blend in between
 const ISLAND_RADIUS        = 900.0;  // birds beyond this distance get pulled back
 const K_ISLAND             = 2.5;    // island return force strength
+const K_WANDER             = 0.35;   // per-bird wander nudge — causes merged flocks to split
+const WANDER_TURN          = 0.35;   // rad/s max drift of each bird's wander angle
 
 export class Flock {
   private pos: Float32Array;       // [x,y,z] * NUM_BIRDS
@@ -44,6 +46,8 @@ export class Flock {
   private pipeline!: GPURenderPipeline;
   private bindGroup!: GPUBindGroup;
   private heightmapData: Float32Array | null = null;
+  private wander: Float32Array;     // per-bird slowly-drifting preferred heading (XZ angle)
+  private wanderRate: Float32Array; // per-bird wander rotation rate
 
   constructor(
     private device: GPUDevice,
@@ -56,6 +60,8 @@ export class Flock {
     this.pos          = new Float32Array(NUM_BIRDS * 3);
     this.vel          = new Float32Array(NUM_BIRDS * 3);
     this.instanceData = new Float32Array(NUM_BIRDS * 8);
+    this.wander       = new Float32Array(NUM_BIRDS);
+    this.wanderRate   = new Float32Array(NUM_BIRDS);
     this.init();
   }
 
@@ -112,6 +118,12 @@ export class Flock {
       this.vel[b]   = Math.cos(dir) * SPEED;
       this.vel[b+1] = (Math.random() - 0.5) * SPEED * 0.05;
       this.vel[b+2] = Math.sin(dir) * SPEED;
+    }
+
+    // Each bird gets a unique wander angle and a slow random drift rate
+    for (let i = 0; i < NUM_BIRDS; i++) {
+      this.wander[i]     = Math.random() * Math.PI * 2;
+      this.wanderRate[i] = (Math.random() - 0.5) * 2 * WANDER_TURN;
     }
   }
 
@@ -387,11 +399,16 @@ export class Flock {
       const islandX = (-px / (distFromIsland + 1e-6)) * islandPull;
       const islandZ = (-pz / (distFromIsland + 1e-6)) * islandPull;
 
+      // Per-bird wander: slow unique drift that causes merged flocks to re-split over time
+      const wa  = this.wander[i];
+      const wdX = Math.cos(wa) * K_WANDER;
+      const wdZ = Math.sin(wa) * K_WANDER;
+
       // Sum into desired direction — vertical boid forces scaled down to keep flight level
       const yDamp = 0.15;
-      let dx = K_AVOID*avX + K_ALIGN*alX + K_COHES*coX + K_BOUND*isolation*bnX + K_TERR*trrX + K_ISLAND*islandX;
+      let dx = K_AVOID*avX + K_ALIGN*alX + K_COHES*coX + K_BOUND*isolation*bnX + K_TERR*trrX + K_ISLAND*islandX + wdX;
       let dy = yDamp*(K_AVOID*avY + K_ALIGN*alY + K_COHES*coY + K_BOUND*isolation*bnY) + altErr;
-      let dz = K_AVOID*avZ + K_ALIGN*alZ + K_COHES*coZ + K_BOUND*isolation*bnZ + K_TERR*trrZ + K_ISLAND*islandZ;
+      let dz = K_AVOID*avZ + K_ALIGN*alZ + K_COHES*coZ + K_BOUND*isolation*bnZ + K_TERR*trrZ + K_ISLAND*islandZ + wdZ;
 
       const dlen = Math.sqrt(dx*dx + dy*dy + dz*dz) + 1e-6;
       dx /= dlen; dy /= dlen; dz /= dlen;
@@ -415,6 +432,9 @@ export class Flock {
       newVel[b]   = nfx * SPEED;
       newVel[b+1] = nfy * SPEED;
       newVel[b+2] = nfz * SPEED;
+
+      // Slowly rotate this bird's wander direction
+      this.wander[i] += this.wanderRate[i] * step;
     }
 
     // Integrate positions, wrap horizontally

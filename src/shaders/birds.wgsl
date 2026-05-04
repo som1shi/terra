@@ -47,7 +47,7 @@ fn vs_main(in: VertIn) -> VertOut {
     let flapZ     = -cos(flapPhase) * 0.5 * in.vertex.w * 0.08;
 
     let lp       = vec3f(in.vertex.x, in.vertex.y + flapY, in.vertex.z + flapZ);
-    let scale    = 11.0;
+    let scale    = 6.0;
     let worldPos = pos
                  + right * (lp.x * scale)
                  + up    * (lp.y * scale)

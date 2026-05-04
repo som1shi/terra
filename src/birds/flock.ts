@@ -1,19 +1,36 @@
 import birdsShaderSource from '../shaders/birds.wgsl?raw';
 
-const NUM_BIRDS    = 300;
+const NUM_BIRDS    = 40;
 const SPEED        = 50.0;  // world units / second
-const MAX_TURN     = 2.5;   // radians / second
-const TARGET_ALT   = 420.0; // desired flight altitude
+const MAX_TURN     = 1.2;   // radians / second — slower turns, more stable flight
+const TARGET_ALT   = 320.0; // desired flight altitude
 const AVOID_RADIUS = 45.0;  // personal-space bubble radius (world units)
 const AVOID_NBRS   = 3;     // how many nearest birds to avoid (not just 1)
 
 // Social weights
 const K_AVOID = 6.0;   // strong short-range repulsion
 const K_ALIGN = 1.2;   // match neighbor directions
-const K_COHES = 0.10;  // gentle pull toward neighborhood centroid
-const K_BOUND = 0.45;  // peripheral birds drift back to flock
-const BOUNDARY_B = 20; // neighbor count at which boundary term fades out
+const K_COHES = 0.10;  // gentle cohesion — loose natural groups
+const K_BOUND = 0.02;  // nearly off — global centroid pull was merging groups
+const BOUNDARY_B = 4;  // fades out quickly so most birds are unaffected
 const NEIGHBOR_K = 7;  // topological neighbors (from Flock2 paper)
+
+// Group spawn config
+const NUM_GROUPS      = 3;
+const GROUP_RING_R    = 650;  // approx radius around island center
+const GROUP_SPREAD    = 180;  // wide spread so groups feel organic, not rigid
+
+// Terrain avoidance
+const TERRAIN_GRID         = 512;
+const TERRAIN_WORLD_HALF   = 2048.0;
+const TERRAIN_HEIGHT_SCALE = 600.0;
+const TERRAIN_SAMPLE_STEP  = 80.0;   // gradient sample offset (world units)
+const TERRAIN_LOOKAHEAD    = 320.0;  // lookahead distance — react to terrain earlier
+const K_TERR               = 9.0;    // horizontal terrain steering weight
+const MOUNTAIN_LOW         = 180.0;  // below this: fly over
+const MOUNTAIN_HIGH        = 260.0;  // above this: go around; blend in between
+const ISLAND_RADIUS        = 900.0;  // birds beyond this distance get pulled back
+const K_ISLAND             = 2.5;    // island return force strength
 
 export class Flock {
   private pos: Float32Array;       // [x,y,z] * NUM_BIRDS
@@ -26,13 +43,16 @@ export class Flock {
 
   private pipeline!: GPURenderPipeline;
   private bindGroup!: GPUBindGroup;
+  private heightmapData: Float32Array | null = null;
 
   constructor(
     private device: GPUDevice,
     private format: GPUTextureFormat,
     private globalsBuffer: GPUBuffer,
     private sampleCount: number = 4,
+    heightmapData: Float32Array | null = null,
   ) {
+    this.heightmapData = heightmapData;
     this.pos          = new Float32Array(NUM_BIRDS * 3);
     this.vel          = new Float32Array(NUM_BIRDS * 3);
     this.instanceData = new Float32Array(NUM_BIRDS * 8);
@@ -40,20 +60,58 @@ export class Flock {
   }
 
   private init(): void {
-    // Scatter flock near world center at target altitude, all flying roughly +X
-    const cx = 0, cy = TARGET_ALT, cz = 100;
-    const spread = 600;
+    // Groups get absolute headings 120° apart from a random base —
+    // guarantees no two groups fly in the same direction regardless of spawn position
+    const headingBase = Math.random() * Math.PI * 2;
+    const centers: [number, number, number][] = []; // [x, z, heading]
+    for (let g = 0; g < NUM_GROUPS; g++) {
+      const spawnAngle = (g / NUM_GROUPS) * Math.PI * 2 + (Math.random() - 0.5) * 1.0;
+      const r          = GROUP_RING_R + (Math.random() - 0.5) * 250;
+      const heading    = headingBase + (g / NUM_GROUPS) * Math.PI * 2; // 120° apart, absolute
+      centers.push([Math.cos(spawnAngle) * r, Math.sin(spawnAngle) * r, heading]);
+    }
+
+    // Random unequal group weights so sizes vary naturally
+    const weights = Array.from({ length: NUM_GROUPS }, () => 0.5 + Math.random());
+    const wTotal  = weights.reduce((s, w) => s + w, 0);
+
+    // ~15% of birds spawn as loners at arbitrary positions
+    const loneCount = Math.round(NUM_BIRDS * 0.15);
 
     for (let i = 0; i < NUM_BIRDS; i++) {
       const b = i * 3;
-      this.pos[b]   = cx + (Math.random() - 0.5) * spread;
-      this.pos[b+1] = cy + (Math.random() - 0.5) * 60;
-      this.pos[b+2] = cz + (Math.random() - 0.5) * spread;
 
-      const angle = (Math.random() - 0.5) * 0.6; // ±0.3 rad from +X direction
-      this.vel[b]   = Math.cos(angle) * SPEED;
+      if (i < loneCount) {
+        const a = Math.random() * Math.PI * 2;
+        const r = 300 + Math.random() * 500;
+        this.pos[b]   = Math.cos(a) * r;
+        this.pos[b+1] = TARGET_ALT + (Math.random() - 0.5) * 100;
+        this.pos[b+2] = Math.sin(a) * r;
+      } else {
+        // Pick group by weighted random
+        let pick = Math.random() * wTotal, g = 0;
+        for (let acc = 0; g < NUM_GROUPS - 1; g++) {
+          acc += weights[g];
+          if (pick <= acc) break;
+        }
+        const [gx, gz, gHeading] = centers[g];
+        this.pos[b]   = gx + (Math.random() - 0.5) * GROUP_SPREAD;
+        this.pos[b+1] = TARGET_ALT + (Math.random() - 0.5) * 60;
+        this.pos[b+2] = gz + (Math.random() - 0.5) * GROUP_SPREAD;
+
+        // Each group has its own heading with small per-bird variation
+        const dir     = gHeading + (Math.random() - 0.5) * 0.6;
+        this.vel[b]   = Math.cos(dir) * SPEED;
+        this.vel[b+1] = (Math.random() - 0.5) * SPEED * 0.05;
+        this.vel[b+2] = Math.sin(dir) * SPEED;
+        continue;
+      }
+
+      // Loner: random heading
+      const dir     = Math.random() * Math.PI * 2;
+      this.vel[b]   = Math.cos(dir) * SPEED;
       this.vel[b+1] = (Math.random() - 0.5) * SPEED * 0.05;
-      this.vel[b+2] = Math.sin(angle) * SPEED;
+      this.vel[b+2] = Math.sin(dir) * SPEED;
     }
   }
 
@@ -205,6 +263,15 @@ export class Flock {
     );
   }
 
+  private sampleTerrainHeight(x: number, z: number): number {
+    if (!this.heightmapData) return 0;
+    const uvX = (x + TERRAIN_WORLD_HALF) / (TERRAIN_WORLD_HALF * 2);
+    const uvZ = (z + TERRAIN_WORLD_HALF) / (TERRAIN_WORLD_HALF * 2);
+    const px  = Math.max(0, Math.min(TERRAIN_GRID - 1, Math.floor(uvX * TERRAIN_GRID)));
+    const pz  = Math.max(0, Math.min(TERRAIN_GRID - 1, Math.floor(uvZ * TERRAIN_GRID)));
+    return this.heightmapData[pz * TERRAIN_GRID + px] * TERRAIN_HEIGHT_SCALE;
+  }
+
   update(dt: number): void {
     const step = Math.min(dt, 0.033);
     const N    = NUM_BIRDS;
@@ -278,13 +345,53 @@ export class Flock {
       const bLen = Math.sqrt(bnX*bnX + bnY*bnY + bnZ*bnZ) + 1e-6;
       bnX /= bLen; bnY /= bLen; bnZ /= bLen;
 
-      // Altitude correction: gently restore to target height
-      const altErr = (TARGET_ALT - py) * 0.007;
+      // Terrain avoidance: sample gradient + 3-way lookahead (ahead, left, right)
+      const terrainH = this.sampleTerrainHeight(px, pz);
+      const hR  = this.sampleTerrainHeight(px + TERRAIN_SAMPLE_STEP, pz);
+      const hL  = this.sampleTerrainHeight(px - TERRAIN_SAMPLE_STEP, pz);
+      const hFw = this.sampleTerrainHeight(px, pz + TERRAIN_SAMPLE_STEP);
+      const hBk = this.sampleTerrainHeight(px, pz - TERRAIN_SAMPLE_STEP);
+      const LD = TERRAIN_LOOKAHEAD;
+      const rightX = -fz, rightZ = fx; // XZ perpendicular to forward
+      const hAheadC = this.sampleTerrainHeight(px + fx*LD,                       pz + fz*LD);
+      const hAheadL = this.sampleTerrainHeight(px + fx*LD*0.7 - rightX*LD*0.7,   pz + fz*LD*0.7 - rightZ*LD*0.7);
+      const hAheadR = this.sampleTerrainHeight(px + fx*LD*0.7 + rightX*LD*0.7,   pz + fz*LD*0.7 + rightZ*LD*0.7);
+      const hAhead  = Math.max(hAheadC, hAheadL, hAheadR);
+      const gradX = hR - hL;
+      const gradZ = hFw - hBk;
+      const gLen  = Math.sqrt(gradX*gradX + gradZ*gradZ) + 1e-6;
+      const maxNearby = Math.max(terrainH, hAhead, hR, hL, hFw, hBk);
 
-      // Sum into desired direction
-      let dx = K_AVOID*avX + K_ALIGN*alX + K_COHES*coX + K_BOUND*isolation*bnX;
-      let dy = K_AVOID*avY + K_ALIGN*alY + K_COHES*coY + K_BOUND*isolation*bnY + altErr;
-      let dz = K_AVOID*avZ + K_ALIGN*alZ + K_COHES*coZ + K_BOUND*isolation*bnZ;
+      // Directional bias: lean toward whichever side has lower terrain ahead
+      const sideBias = Math.sign(hAheadL - hAheadR); // +1 = steer right, -1 = steer left
+      const biasStr  = Math.min(1.0, Math.abs(hAheadL - hAheadR) / 80);
+
+      // Blend: 0 = fly over (low), 1 = go around (high)
+      const mBlend = Math.max(0, Math.min(1, (maxNearby - MOUNTAIN_LOW) / (MOUNTAIN_HIGH - MOUNTAIN_LOW)));
+      const smoothT = mBlend * mBlend * (3 - 2 * mBlend);
+
+      // Fly-over component
+      const overTarget = Math.max(TARGET_ALT, maxNearby + 60);
+      const altErr     = (1 - smoothT) * (overTarget - py) * 0.012
+                       +      smoothT  * (TARGET_ALT  - py) * 0.005;
+
+      // Go-around component: gradient repulsion + directional bias toward clearer path
+      const horizThreat = smoothT * Math.max(0, maxNearby - py + 60);
+      const hScale      = Math.min(2.5, horizThreat / 60);
+      const trrX = (-(gradX / gLen) + rightX * sideBias * biasStr) * hScale;
+      const trrZ = (-(gradZ / gLen) + rightZ * sideBias * biasStr) * hScale;
+
+      // Island boundary: pull birds back toward (0,0) when they stray too far out to sea
+      const distFromIsland = Math.sqrt(px*px + pz*pz);
+      const islandPull = Math.max(0, (distFromIsland - ISLAND_RADIUS) / ISLAND_RADIUS);
+      const islandX = (-px / (distFromIsland + 1e-6)) * islandPull;
+      const islandZ = (-pz / (distFromIsland + 1e-6)) * islandPull;
+
+      // Sum into desired direction — vertical boid forces scaled down to keep flight level
+      const yDamp = 0.15;
+      let dx = K_AVOID*avX + K_ALIGN*alX + K_COHES*coX + K_BOUND*isolation*bnX + K_TERR*trrX + K_ISLAND*islandX;
+      let dy = yDamp*(K_AVOID*avY + K_ALIGN*alY + K_COHES*coY + K_BOUND*isolation*bnY) + altErr;
+      let dz = K_AVOID*avZ + K_ALIGN*alZ + K_COHES*coZ + K_BOUND*isolation*bnZ + K_TERR*trrZ + K_ISLAND*islandZ;
 
       const dlen = Math.sqrt(dx*dx + dy*dy + dz*dz) + 1e-6;
       dx /= dlen; dy /= dlen; dz /= dlen;
@@ -297,6 +404,11 @@ export class Flock {
       let nfx = fx + t*(dx - fx);
       let nfy = fy + t*(dy - fy);
       let nfz = fz + t*(dz - fz);
+
+      // Emergency lift applied after turn — can't be diluted by horizontal avoidance forces
+      const emergencyUp = Math.max(0, terrainH + 100 - py) / 100;
+      nfy += emergencyUp * 0.5;
+
       const nfl = Math.sqrt(nfx*nfx + nfy*nfy + nfz*nfz) + 1e-6;
       nfx /= nfl; nfy /= nfl; nfz /= nfl;
 

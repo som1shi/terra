@@ -111,7 +111,7 @@ export class Renderer {
     }
 
     this.ui.setStatus('Spawning birds...', 97);
-    this.flock = new Flock(this.device, this.format, this.globalsBuffer, 4);
+    this.flock = new Flock(this.device, this.format, this.globalsBuffer, 4, heightData);
     await this.flock.initGPU();
 
     this.ui.setStatus('Ready!', 100);

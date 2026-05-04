@@ -1,16 +1,19 @@
 struct Globals {
-    viewProj    : mat4x4f,
-    invViewProj : mat4x4f,
-    sunDir      : vec3f,
-    _pad0       : f32,
-    cameraPos   : vec3f,
-    _pad1       : f32,
-    time        : f32,
-    timeOfDay   : f32,
-    seaLevel    : f32,
-    _pad2       : f32,
-    resolution  : vec2f,
-    _pad3       : vec2f,
+    viewProj      : mat4x4f,
+    invViewProj   : mat4x4f,
+    sunDir        : vec3f,
+    _pad0         : f32,
+    cameraPos     : vec3f,
+    _pad1         : f32,
+    time          : f32,
+    timeOfDay     : f32,
+    seaLevel      : f32,
+    seed          : f32,
+    resolution    : vec2f,
+    moonIntensity : f32,
+    _pad2         : f32,
+    moonDir       : vec3f,
+    _pad3         : f32,
 };
 
 @group(0) @binding(0) var<uniform>       globals   : Globals;
@@ -78,17 +81,29 @@ fn fs_main(in: VertOut) -> @location(0) vec4f {
 
     let sunDir    = globals.sunDir;
     let dayFactor = smoothstep(-0.05, 0.15, sunDir.y);
+    let nightFactor = 1.0 - dayFactor;
 
     let sunColor = mix(vec3f(1.5, 0.6, 0.2), vec3f(1.4, 1.2, 0.9),
                        smoothstep(0.0, 0.2, sunDir.y)) * dayFactor;
 
+    // Moon diffuse on grass (wrapped Lambert, same as sun)
+    let moonDir       = globals.moonDir;
+    let moonIntensity = globals.moonIntensity;
+    let moonNdotL     = dot(vec3f(0.0, 1.0, 0.0), moonDir);
+    let moonWrapped   = clamp((moonNdotL + 0.5) / 1.5, 0.0, 1.0);
+    let moonDiff      = moonWrapped * vec3f(0.008, 0.009, 0.014) * moonIntensity;
+
+    // Night ambient: starlight + moon-scattered sky glow
+    let night_amb = vec3f(0.003, 0.004, 0.009) * moonIntensity
+                  + vec3f(0.0003, 0.0003, 0.0008);
+
     let ambient = vec3f(0.09, 0.15, 0.27) * dayFactor
-                + vec3f(0.006, 0.006, 0.018) * (1.0 - dayFactor);
+                + night_amb * nightFactor;
 
     let NdotL   = dot(vec3f(0.0, 1.0, 0.0), sunDir);
     let wrapped = clamp((NdotL + 0.5) / 1.5, 0.0, 1.0);
     let diffuse = wrapped * sunColor * 1.1;
 
-    let color = baseColor * (ambient + diffuse);
+    let color = baseColor * (ambient + diffuse + moonDiff);
     return vec4f(color, 1.0);
 }

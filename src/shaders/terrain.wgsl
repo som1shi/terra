@@ -1,16 +1,19 @@
 struct Globals {
-    viewProj    : mat4x4f,
-    invViewProj : mat4x4f,
-    sunDir      : vec3f,
-    _pad0       : f32,
-    cameraPos   : vec3f,
-    _pad1       : f32,
-    time        : f32,
-    timeOfDay   : f32,
-    seaLevel    : f32,
-    _pad2       : f32,
-    resolution  : vec2f,
-    _pad3       : vec2f,
+    viewProj      : mat4x4f,
+    invViewProj   : mat4x4f,
+    sunDir        : vec3f,
+    _pad0         : f32,
+    cameraPos     : vec3f,
+    _pad1         : f32,
+    time          : f32,
+    timeOfDay     : f32,
+    seaLevel      : f32,
+    seed          : f32,
+    resolution    : vec2f,
+    moonIntensity : f32,
+    _pad2         : f32,
+    moonDir       : vec3f,
+    _pad3         : f32,
 };
 
 @group(0) @binding(0) var<uniform> globals : Globals;
@@ -221,11 +224,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let sun_term = NdotL * vec3f(1.64, 1.27, 0.99)
                  * pow(vec3f(rawShadow), vec3f(1.0, 1.2, 1.5)) * dayFactor;
 
-    let sky_term = (0.5 + 0.5 * N.y) * vec3f(0.16, 0.20, 0.28) * dayFactor
-                 + (0.5 + 0.5 * N.y) * vec3f(0.006, 0.006, 0.018) * (1.0 - dayFactor);
-
     let ind_dir  = normalize(sunDir * vec3f(-1.0, 0.0, -1.0));
     let ind_term = max(dot(N, ind_dir), 0.0) * vec3f(0.40, 0.28, 0.20) * dayFactor;
+
+    // Moon lighting: directional term (no shadow for performance — moonIntensity already encodes horizon clip)
+    let moonDir       = globals.moonDir;
+    let moonIntensity = globals.moonIntensity;
+    let moonNdotL     = max(dot(N, moonDir), 0.0);
+    let moon_term     = moonNdotL * vec3f(0.010, 0.011, 0.018) * moonIntensity;
+
+    // Night sky ambient: starlight base + moon-scattered ambient that scales with moonIntensity
+    let night_amb = vec3f(0.004, 0.005, 0.010) * moonIntensity
+                  + vec3f(0.0003, 0.0003, 0.0009); // irreducible starlight
+
+    let sky_term = (0.5 + 0.5 * N.y) * vec3f(0.16, 0.20, 0.28) * dayFactor
+                 + (0.5 + 0.5 * N.y) * night_amb * (1.0 - dayFactor);
 
     let hbao        = textureSampleLevel(aoTex, aoSampler, uv, 0.0).r;
     let hbao_factor = mix(0.35, 1.0, hbao);
@@ -391,7 +404,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let h_avg      = (h_px + h_nx + h_py + h_ny) * 0.25;
     let crevice_ao = clamp(1.0 - 2.5 * max(0.0, h_avg - h_c), 0.4, 1.0);
 
-    var color = terrain_color * (sun_term + sky_term * hbao_factor + ind_term * hbao_factor) * crevice_ao;
+    var color = terrain_color * (sun_term + sky_term * hbao_factor + ind_term * hbao_factor + moon_term * hbao_factor) * crevice_ao;
 
     let V          = normalize(globals.cameraPos - in.world_pos);
     let riverRefl  = reflect(-sunDir, N);

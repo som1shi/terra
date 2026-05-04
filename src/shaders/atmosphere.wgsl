@@ -1,16 +1,19 @@
 struct Globals {
-    viewProj    : mat4x4f,
-    invViewProj : mat4x4f,
-    sunDir      : vec3f,
-    _pad0       : f32,
-    cameraPos   : vec3f,
-    _pad1       : f32,
-    time        : f32,
-    timeOfDay   : f32,
-    seaLevel    : f32,
-    seed        : f32,
-    resolution  : vec2f,
-    _pad3       : vec2f,
+    viewProj      : mat4x4f,
+    invViewProj   : mat4x4f,
+    sunDir        : vec3f,
+    _pad0         : f32,
+    cameraPos     : vec3f,
+    _pad1         : f32,
+    time          : f32,
+    timeOfDay     : f32,
+    seaLevel      : f32,
+    seed          : f32,
+    resolution    : vec2f,
+    moonIntensity : f32,
+    _pad2         : f32,
+    moonDir       : vec3f,
+    _pad3         : f32,
 };
 
 struct VOut {
@@ -169,6 +172,76 @@ fn hg(cosTheta: f32, g: f32) -> f32 {
     return (1.0 - g2) / (4.0 * PI * pow(1.0 + g2 - 2.0 * g * cosTheta, 1.5));
 }
 
+fn starHash(p: vec2f) -> vec3f {
+    var q = fract(p * vec2f(0.1031, 0.1030));
+    q += dot(q, q.yx + 33.33);
+    return fract(vec3f((q.x + q.y) * q.x,
+                       (q.x + q.y) * q.y,
+                        q.x * q.y  + 17.0));
+}
+
+fn renderStars(dir: vec3f, nightFac: f32) -> vec3f {
+    if (nightFac < 0.005) { return vec3f(0.0); }
+
+    let az  = atan2(dir.z, dir.x);
+    let alt = asin(clamp(dir.y, -0.9999, 0.9999));
+
+    let CELLS : f32 = 160.0;
+    let uv    = vec2f(az, alt) * CELLS;
+    let cell  = floor(uv);
+    let frac  = fract(uv);
+
+    let gal_pole  = normalize(vec3f(0.41, 0.20, 0.89));
+    let in_band   = smoothstep(0.30, 0.0, abs(dot(dir, gal_pole)));
+    let threshold = mix(0.002, 0.018, in_band);
+
+    var col = vec3f(0.0);
+
+    let h = starHash(cell);
+    if (h.x <= threshold) {
+        let sp         = vec2f(h.y, h.z);
+        let dist       = length(frac - sp);
+        let mag        = h.x / threshold;
+        let brightness = pow(1.0 - mag, 2.5) * 1.4 + 0.05;
+        let sz         = 0.15 + brightness * 0.04;
+        let glow       = exp(-dist * dist / (sz * sz)) * brightness;
+        col = vec3f(1.0) * glow;
+    }
+
+    let ext = smoothstep(-0.15, 0.05, dir.y);
+    return col * nightFac * ext;
+}
+
+fn milkyWay(dir: vec3f, nightFac: f32) -> vec3f {
+    if (nightFac < 0.005) { return vec3f(0.0); }
+
+    let gal_pole = normalize(vec3f(0.41, 0.20, 0.89));
+    let gal_dot  = dot(dir, gal_pole);
+
+    let band = exp(-gal_dot * gal_dot * 25.0);
+    if (band < 0.001) { return vec3f(0.0); }
+
+    let gal_center = normalize(vec3f(0.79, 0.41, -0.46));
+    let dir_flat   = dir - gal_dot * gal_pole + vec3f(0.0001);
+    let along_band = dot(normalize(dir_flat), gal_center);
+    let core_boost = pow(max(0.0, along_band), 5.0);
+
+    let n = noise3(dir * 3.0 + vec3f(0.3, 0.7, 0.1)) * 0.55
+          + noise3(dir * 8.0 + vec3f(1.2, 0.4, 0.8)) * 0.30
+          + noise3(dir * 18.0 + vec3f(2.1, 1.5, 0.3)) * 0.15;
+    let density = 0.25 + 0.75 * smoothstep(0.15, 0.65, n);
+
+    let band_t = clamp(1.0 - abs(gal_dot) * 4.0, 0.0, 1.0);
+    var col = mix(vec3f(0.32, 0.18, 0.52),
+                  vec3f(0.88, 0.84, 0.78),
+                  smoothstep(0.0, 0.7, band_t));
+    col = mix(col, vec3f(0.95, 0.78, 0.42),
+              core_boost * smoothstep(0.4, 0.9, band_t) * 0.75);
+
+    let ext = smoothstep(-0.05, 0.15, dir.y);
+    return col * band * density * core_boost * nightFac * ext * 0.040;
+}
+
 struct CloudResult { color: vec3f, transmittance: f32 }
 
 fn marchClouds(ray_o: vec3f, ray_d: vec3f, sun_dir: vec3f, sky_col: vec3f) -> CloudResult {
@@ -184,13 +257,19 @@ fn marchClouds(ray_o: vec3f, ray_d: vec3f, sun_dir: vec3f, sky_col: vec3f) -> Cl
     t1 = min(t1, t0 + 5000.0);
 
     let ds  = (t1 - t0) / f32(CLOUD_STEPS);
-    let cos_sun = dot(ray_d, sun_dir);
-    let phase = hg(cos_sun, 0.65) * 0.6 + hg(cos_sun, -0.3) * 0.4;
+    let cos_sun  = dot(ray_d, sun_dir);
+    let phase    = hg(cos_sun, 0.65) * 0.6 + hg(cos_sun, -0.3) * 0.4;
 
     let sun_elev  = sun_dir.y;
     let day_fac   = smoothstep(-0.05, 0.15, sun_elev);
     let sun_col   = mix(vec3f(1.8, 0.8, 0.4), vec3f(1.5, 1.45, 1.40), smoothstep(0.0, 0.2, sun_elev))
                   * day_fac * 2.2;
+
+    let moon_dir  = globals.moonDir;
+    let moon_int  = globals.moonIntensity;
+    let cos_moon  = dot(ray_d, moon_dir);
+    let phase_moon = hg(cos_moon, 0.65) * 0.6 + hg(cos_moon, -0.3) * 0.4;
+    let moon_col  = vec3f(0.55, 0.65, 1.0) * moon_int * 0.12;
 
     let jitter = hash3(ray_d * 937.31 + ray_o * 0.00017) * ds;
 
@@ -215,10 +294,20 @@ fn marchClouds(ray_o: vec3f, ray_d: vec3f, sun_dir: vec3f, sky_col: vec3f) -> Cl
         let powder = 1.0 - exp(-T_sun * 2.0);
         let L_sun  = sun_col * beer * powder * phase * sigma_s;
 
-        let L_amb  = mix(vec3f(0.02, 0.02, 0.04), vec3f(1.00, 1.02, 1.05), day_fac)
+        var T_moon = 0.0;
+        for (var j = 0u; j < 4u; j++) {
+            let st = f32(j + 1u) * 300.0;
+            T_moon += cloudSampleDensity(wp + moon_dir * st) * CLOUD_SIGMA_E * 300.0;
+        }
+        let beer_m   = exp(-T_moon);
+        let powder_m = 1.0 - exp(-T_moon * 2.0);
+        let L_moon   = moon_col * beer_m * powder_m * phase_moon * sigma_s;
+
+        let L_amb  = mix(vec3f(0.02, 0.02, 0.04) + vec3f(0.01, 0.012, 0.02) * moon_int,
+                         vec3f(1.00, 1.02, 1.05), day_fac)
                    * 0.80 * sigma_s;
 
-        result.color += T * (L_sun + L_amb) * (1.0 - dT) / max(sigma_e, 1e-5);
+        result.color += T * (L_sun + L_moon + L_amb) * (1.0 - dT) / max(sigma_e, 1e-5);
         T *= dT;
         if (T < 0.01) { break; }
     }
@@ -242,22 +331,43 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     let ms_ambient = vec3f(0.10, 0.28, 1.0) * 0.035 * day_fac;
     sky += ms_ambient;
 
+    let zenith_y2 = sky_dir.y * sky_dir.y;
+    sky += vec3f(0.12, 0.14, 0.40) * zenith_y2 * day_fac;
+
     sky.g *= 1.0 - day_fac * 0.40;
 
-    let night_sky = vec3f(0.004, 0.005, 0.018);
+    let moon_sky_amb = vec3f(0.003, 0.004, 0.013) * globals.moonIntensity;
+    let star_sky     = vec3f(0.0005, 0.0005, 0.0020);
+    let night_sky    = moon_sky_amb + star_sky;
     sky = mix(night_sky, sky, clamp(day_fac * 1.1, 0.0, 1.0));
 
     let cos_sun  = dot(view_dir, sun_dir);
-    let sun_disk = smoothstep(0.9997, 0.9999, cos_sun) * day_fac * 8.0;
+    let sun_disk = smoothstep(0.99863, 0.99985, cos_sun) * day_fac * 8.0;
     sky += vec3f(sun_disk) * vec3f(1.5, 1.25, 1.0);
 
-    let night_fac    = 1.0 - day_fac;
-    let moon_ang     = (fract(tod + 0.5) - 0.5) * PI;
-    let moon_dir     = normalize(vec3f(-sin(moon_ang), sin(moon_ang * 2.0) * 0.8, cos(moon_ang)));
-    let cos_moon     = dot(view_dir, moon_dir);
-    let moon_disk    = smoothstep(0.9975, 0.9985, cos_moon) * night_fac * 0.35;
-    let moon_glow    = smoothstep(0.990, 0.9975, cos_moon)  * night_fac * 0.08;
-    sky += vec3f(moon_disk + moon_glow);
+    let night_fac = 1.0 - day_fac;
+
+    let moon_dir    = globals.moonDir;
+    let moon_int    = globals.moonIntensity;
+    let moon_above  = smoothstep(-0.02, 0.06, moon_dir.y);
+    let cos_moon    = dot(view_dir, moon_dir);
+
+    let disk_outer = 0.99939;
+    let disk_inner = 0.99985;
+    let disk_t     = smoothstep(disk_outer, disk_inner, cos_moon);
+    let disk_frac  = clamp((cos_moon - disk_outer) / (1.0 - disk_outer), 0.0, 1.0);
+    let mu_limb    = sqrt(max(disk_frac, 0.0));
+    let limb_dark  = 1.0 - 0.35 * (1.0 - mu_limb);
+    let moon_disk  = disk_t * limb_dark * moon_above * night_fac * 0.38;
+
+    let glow_fac  = max(0.0, cos_moon - 0.99756) / (1.0 - 0.99756);
+    let moon_glow = pow(glow_fac, 2.5) * moon_above * night_fac * 0.055;
+
+    let moon_color = vec3f(0.90, 0.94, 1.0);
+    sky += moon_color * (moon_disk + moon_glow);
+
+    sky += renderStars(view_dir, night_fac);
+    sky += milkyWay(view_dir, night_fac);
 
     let cam_above_clouds = globals.cameraPos.y > CLOUD_TOP;
     let enters_layer = select(view_dir.y > 0.01, view_dir.y < -0.01, cam_above_clouds)

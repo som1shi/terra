@@ -6,8 +6,11 @@ import { ErosionSystem } from './terrain/erosion';
 import { Vegetation } from './terrain/vegetation';
 import { Ocean, SEA_LEVEL } from './terrain/ocean';
 import { Atmosphere } from './atmosphere/atmosphere';
+import { Bloom } from './post/bloom';
 
 export const GLOBALS_BUFFER_SIZE = 192;
+
+const HDR_FORMAT: GPUTextureFormat = 'rgba16float';
 
 export class Renderer {
   private camera: Camera;
@@ -19,8 +22,13 @@ export class Renderer {
   private ocean!: Ocean;
   private vegetation!: Vegetation;
   private atmosphere!: Atmosphere;
+  private bloom!: Bloom;
+
   private msaaTexture!: GPUTexture;
   private msaaView!: GPUTextureView;
+  private hdrTexture!: GPUTexture;
+  private hdrView!: GPUTextureView;
+
   private timeOfDay = 0.45;
   private seed!: number;
 
@@ -44,7 +52,7 @@ export class Renderer {
     });
 
     this.createDepthTexture();
-    this.createMSAATexture();
+    this.createHDRTextures();
 
     this.ui.setStatus('Generating terrain heightmap...', 40);
 
@@ -77,17 +85,17 @@ export class Renderer {
 
     this.ui.setStatus('Building terrain mesh...', 75);
 
-    this.terrain = new Terrain(this.device, this.format, heightmapTex, this.globalsBuffer, erosion.getSmoothedAccumTex());
+    this.terrain = new Terrain(this.device, HDR_FORMAT, heightmapTex, this.globalsBuffer, erosion.getSmoothedAccumTex());
     await this.terrain.init();
 
-    this.ocean = new Ocean(this.device, this.format, this.globalsBuffer, 4);
+    this.ocean = new Ocean(this.device, HDR_FORMAT, this.globalsBuffer, 4);
     await this.ocean.init();
 
     this.ui.setStatus('Placing vegetation...', 90);
 
     this.vegetation = new Vegetation(
       this.device,
-      this.format,
+      HDR_FORMAT,
       this.globalsBuffer,
       heightmapTex,
       this.terrain.getNormalTex(),
@@ -100,13 +108,15 @@ export class Renderer {
     this.ui.setStatus('Initializing atmosphere...', 95);
 
     try {
-      this.atmosphere = new Atmosphere(this.device, this.format, this.globalsBuffer, this.seed);
+      this.atmosphere = new Atmosphere(this.device, HDR_FORMAT, this.globalsBuffer, this.seed);
       await this.atmosphere.init();
-      console.log('Atmosphere: Successfully integrated into renderer');
     } catch (error) {
       console.error('Renderer: Failed to initialize atmosphere:', error);
       throw error;
     }
+
+    this.bloom = new Bloom(this.device, this.format);
+    await this.bloom.init(this.canvas.width, this.canvas.height);
 
     this.ui.setStatus('Ready!', 100);
   }
@@ -123,22 +133,32 @@ export class Renderer {
     this.depthView = this.depthTexture.createView();
   }
 
-  private createMSAATexture(): void {
+  private createHDRTextures(): void {
     if (this.msaaTexture) this.msaaTexture.destroy();
+    if (this.hdrTexture) this.hdrTexture.destroy();
     this.msaaTexture = this.device.createTexture({
-      label: 'MSAA Color Texture',
+      label: 'MSAA HDR Texture',
       size: { width: this.canvas.width, height: this.canvas.height },
-      format: this.format,
+      format: HDR_FORMAT,
       sampleCount: 4,
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
     });
     this.msaaView = this.msaaTexture.createView();
+
+    this.hdrTexture = this.device.createTexture({
+      label: 'HDR Resolve Texture',
+      size: { width: this.canvas.width, height: this.canvas.height },
+      format: HDR_FORMAT,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.hdrView = this.hdrTexture.createView();
   }
 
   onResize(width: number, height: number): void {
     this.camera.onResize(width, height);
     this.createDepthTexture();
-    this.createMSAATexture();
+    this.createHDRTextures();
+    this.bloom?.resize(width, height);
   }
 
   setTimeOfDay(tod: number): void {
@@ -196,8 +216,8 @@ export class Renderer {
       label: 'Main Render Pass',
       colorAttachments: [{
         view: this.msaaView,
-        resolveTarget: this.context.getCurrentTexture().createView(),
-        clearValue: { r: 0.45, g: 0.65, b: 0.85, a: 1.0 },
+        resolveTarget: this.hdrView,
+        clearValue: { r: 0, g: 0, b: 0, a: 1 },
         loadOp: 'clear',
         storeOp: 'discard',
       }],
@@ -215,6 +235,7 @@ export class Renderer {
     this.vegetation.encode(renderPass);
 
     renderPass.end();
+    this.bloom.encode(encoder, this.hdrTexture, this.context.getCurrentTexture().createView());
     this.device.queue.submit([encoder.finish()]);
   }
 }

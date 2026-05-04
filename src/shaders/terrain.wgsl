@@ -79,13 +79,15 @@ fn skyColor(dir: vec3f, sunDir: vec3f, tod: f32) -> vec3f {
     let nightSky  = vec3f(0.01, 0.01, 0.05);
     let dawnSky   = vec3f(0.7, 0.35, 0.15);
     let daySkyTop = vec3f(0.08, 0.25, 0.72);
-    let daySkyHz  = vec3f(0.4, 0.65, 0.9);
+    let daySkyHz  = vec3f(0.40, 0.50, 0.88);
 
     let dayMix  = smoothstep(-0.05, 0.15, sunElevation);
     let dawnMix = smoothstep(-0.15, 0.0, sunElevation) * (1.0 - smoothstep(0.1, 0.3, sunElevation));
 
+    let sunDirFac = 0.15 + 0.85 * smoothstep(-0.6, 0.4, -dot(dir, sunDir));
+
     var sky = mix(nightSky, mix(daySkyHz, daySkyTop, zenith), dayMix);
-    sky = mix(sky, dawnSky, dawnMix * (1.0 - zenith) * 0.6);
+    sky = mix(sky, dawnSky, dawnMix * (1.0 - zenith) * 0.6 * sunDirFac);
     return sky;
 }
 
@@ -414,10 +416,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
 
     color = aces(color);
     color = pow(clamp(color, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2));
-
     let screenUV = in.clip_pos.xy / globals.resolution;
-    let vig = 0.5 + 0.5 * pow(16.0 * screenUV.x * screenUV.y
-            * (1.0 - screenUV.x) * (1.0 - screenUV.y), 0.15);
+    let vig = 0.5 + 0.5 * pow(16.0 * screenUV.x * screenUV.y * (1.0 - screenUV.x) * (1.0 - screenUV.y), 0.15);
     color *= vig;
     let grey = dot(color, vec3f(0.299, 0.587, 0.114));
     color = mix(color, vec3f(grey), 0.12);

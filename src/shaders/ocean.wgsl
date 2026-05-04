@@ -19,8 +19,8 @@ struct Globals {
 const OCEAN_N    : u32 = 128u;
 const MESH_N     : u32 = 256u;
 const TILE_WORLD : f32 = 800.0;
-const WORLD_EXT  : f32 = 16000.0;
-const WORLD_HALF : f32 = 8000.0;
+const WORLD_EXT  : f32 = 40000.0;
+const WORLD_HALF : f32 = 20000.0;
 const WAVE_SCALE : f32 = 1.0;
 
 struct VOut {
@@ -45,9 +45,11 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VOut {
     let wx = f32(vc) / f32(MESH_N) * WORLD_EXT - WORLD_HALF;
     let wz = f32(vr) / f32(MESH_N) * WORLD_EXT - WORLD_HALF;
 
-    let d      = sampleOcean(wx, wz);
-    let height = d.r * WAVE_SCALE;
-    let wy     = globals.seaLevel + height;
+    let d        = sampleOcean(wx, wz);
+    let cam_dist  = length(vec2f(wx - globals.cameraPos.x, wz - globals.cameraPos.z));
+    let wave_fade = 1.0 - smoothstep(5000.0, 9000.0, cam_dist);
+    let height   = d.r * WAVE_SCALE * wave_fade;
+    let wy       = globals.seaLevel + height;
 
     var out: VOut;
     out.clip_pos  = globals.viewProj * vec4f(wx, wy, wz, 1.0);
@@ -85,12 +87,15 @@ fn skyColor(dir: vec3f, sunDir: vec3f) -> vec3f {
     let nightSky     = vec3f(0.01, 0.01, 0.05);
     let dawnSky      = vec3f(0.70, 0.35, 0.15);
     let daySkyTop    = vec3f(0.08, 0.25, 0.72);
-    let daySkyHz     = vec3f(0.40, 0.65, 0.90);
+    let daySkyHz     = vec3f(0.40, 0.50, 0.88);
     let dayMix       = smoothstep(-0.05, 0.15, sunElevation);
     let dawnMix      = smoothstep(-0.15, 0.0, sunElevation)
                      * (1.0 - smoothstep(0.1, 0.3, sunElevation));
+
+    let sunDirFac    = 0.15 + 0.85 * smoothstep(-0.6, 0.4, -dot(dir, sunDir));
+
     var sky           = mix(nightSky, mix(daySkyHz, daySkyTop, zenith), dayMix);
-    sky               = mix(sky, dawnSky, dawnMix * (1.0 - zenith) * 0.6);
+    sky               = mix(sky, dawnSky, dawnMix * (1.0 - zenith) * 0.6 * sunDirFac);
     return sky;
 }
 
@@ -146,8 +151,7 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     color = aces(color);
     color = pow(clamp(color, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2));
     let screenUV = in.clip_pos.xy / globals.resolution;
-    let vig = 0.5 + 0.5 * pow(16.0 * screenUV.x * screenUV.y
-            * (1.0 - screenUV.x) * (1.0 - screenUV.y), 0.15);
+    let vig = 0.5 + 0.5 * pow(16.0 * screenUV.x * screenUV.y * (1.0 - screenUV.x) * (1.0 - screenUV.y), 0.15);
     color *= vig;
     let grey = dot(color, vec3f(0.299, 0.587, 0.114));
     color = mix(color, vec3f(grey), 0.12);

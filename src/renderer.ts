@@ -118,7 +118,7 @@ export class Renderer {
     }
 
     this.ui.setStatus('Spawning birds...', 97);
-    this.flock = new Flock(this.device, this.format, this.globalsBuffer, 4, heightData);
+    this.flock = new Flock(this.device, HDR_FORMAT, this.globalsBuffer, 4, heightData);
     await this.flock.initGPU();
     this.bloom = new Bloom(this.device, this.format);
     await this.bloom.init(this.canvas.width, this.canvas.height);
@@ -213,7 +213,6 @@ export class Renderer {
 
     this.device.queue.writeBuffer(this.globalsBuffer, 0, globalsData);
 
-    this.ocean.update(time);
     this.flock.update(dt);
 
     const encoder = this.device.createCommandEncoder({ label: 'Frame Encoder' });

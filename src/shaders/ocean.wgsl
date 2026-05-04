@@ -1,16 +1,19 @@
 struct Globals {
-    viewProj    : mat4x4f,
-    invViewProj : mat4x4f,
-    sunDir      : vec3f,
-    _pad0       : f32,
-    cameraPos   : vec3f,
-    _pad1       : f32,
-    time        : f32,
-    timeOfDay   : f32,
-    seaLevel    : f32,
-    _pad2       : f32,
-    resolution  : vec2f,
-    _pad3       : vec2f,
+    viewProj      : mat4x4f,
+    invViewProj   : mat4x4f,
+    sunDir        : vec3f,
+    _pad0         : f32,
+    cameraPos     : vec3f,
+    _pad1         : f32,
+    time          : f32,
+    timeOfDay     : f32,
+    seaLevel      : f32,
+    seed          : f32,
+    resolution    : vec2f,
+    moonIntensity : f32,
+    _pad2         : f32,
+    moonDir       : vec3f,
+    _pad3         : f32,
 };
 
 @group(0) @binding(0) var<uniform> globals  : Globals;
@@ -127,7 +130,9 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     let skyRefl = skyColor(reflDir, sunDir) * fresnel;
 
     let deepBlue = vec3f(0.02, 0.09, 0.20);
-    let ambient  = deepBlue * (0.12 + 0.18 * dayFactor) * (1.0 - fresnel);
+    // Night base is much darker; moonlight adds ambient based on moonIntensity
+    let moonIntensity = globals.moonIntensity;
+    let ambient = deepBlue * (0.015 + 0.285 * dayFactor + 0.10 * moonIntensity) * (1.0 - fresnel);
 
     let sunColorDay  = vec3f(1.4, 1.2, 0.9);
     let sunColorDawn = vec3f(1.5, 0.6, 0.2);
@@ -136,7 +141,13 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     let refl_sun = reflect(-sunDir, N_vec);
     let spec     = pow(max(dot(refl_sun, V), 0.0), 256.0) * dayFactor * 3.0;
 
-    var color = ambient + skyRefl + spec * sunColor;
+    // Moon specular: narrow glitter strip on water surface
+    let moonDir   = globals.moonDir;
+    let refl_moon = reflect(-moonDir, N_vec);
+    let spec_moon = pow(max(dot(refl_moon, V), 0.0), 512.0) * moonIntensity * 2.5;
+    let moonColor = vec3f(0.72, 0.82, 1.0);
+
+    var color = ambient + skyRefl + spec * sunColor + moonColor * spec_moon;
 
     let dist      = length(in.world_pos - globals.cameraPos);
     let avgH      = (globals.cameraPos.y + in.world_pos.y) * 0.5;

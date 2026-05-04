@@ -303,15 +303,12 @@
       text-shadow: 0 1px 4px rgba(0,0,0,0.7);
     }
 
-    /* ─── BOTTOM WIDGET ROW ────────────────────────────────────
-       Left-aligned row. Both widgets same width + stretch height.
-    ──────────────────────────────────────────────────────────*/
+    /* ─── BOTTOM-LEFT WIDGET COLUMN ──────────────────────────*/
     #ui-panel {
-      position: fixed; bottom: 0; left: 0; right: 0;
+      position: fixed; bottom: 0; left: 0;
       display: flex;
-      flex-direction: row;
-      justify-content: flex-start;
-      align-items: stretch;
+      flex-direction: column;
+      align-items: flex-start;
       gap: 0.55rem;
       padding: 0 1.5rem 1.5rem;
       pointer-events: none;
@@ -338,46 +335,42 @@
       margin-bottom: 0.48rem;
     }
 
-    /* ── Time of Day ── */
-    .tod-body { display: flex; align-items: center; gap: 0.75rem; }
+    /* ── Time of Day dial ── */
+    .wg-tod {
+      width: 186px;
+      padding: 0.75rem 0.9rem 0.85rem;
+    }
+
+    .tod-dial-wrap {
+      position: relative;
+      width: 148px;
+      height: 148px;
+      margin: 0.5rem auto 0;
+    }
+
+    #tod-dial {
+      display: block;
+      width: 148px;
+      height: 148px;
+      cursor: grab;
+    }
+    #tod-dial:active { cursor: grabbing; }
 
     #tod-display {
-      font-family: var(--f-mono); font-size: 1.38rem; font-weight: 300;
-      color: var(--hi); letter-spacing: 0.03em;
-      text-shadow: 0 1px 6px rgba(0,0,0,0.75);
-      line-height: 1; min-width: 58px; flex-shrink: 0;
-    }
-
-    .tod-track { flex: 1; }
-
-    #tod-slider {
-      -webkit-appearance: none; appearance: none;
-      width: 100%; height: 2px; border-radius: 2px;
-      outline: none; cursor: pointer;
-      background: linear-gradient(90deg,
-        #080820 0%, #162878 17%,
-        #d87630 36%, #f0cc50 50%,
-        #60b8e8 63%, #162878 82%, #080820 100%);
-    }
-    #tod-slider::-webkit-slider-thumb {
-      -webkit-appearance: none; appearance: none;
-      width: 13px; height: 13px; border-radius: 50%;
-      background: #fff;
-      box-shadow:
-        0 0 0 2px rgba(255,255,255,0.20),
-        0 0 10px rgba(200,232,255,0.9),
-        0 2px 4px rgba(0,0,0,0.5);
-      cursor: pointer;
-      transition: transform 0.15s ease;
-    }
-    #tod-slider::-webkit-slider-thumb:hover { transform: scale(1.3); }
-    #tod-slider::-moz-range-thumb {
-      width: 13px; height: 13px; border-radius: 50%;
-      background: #fff; border: none;
-      box-shadow: 0 0 0 2px rgba(255,255,255,0.20), 0 0 10px rgba(200,232,255,0.9);
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      font-family: var(--f-mono); font-size: 1.15rem; font-weight: 300;
+      color: var(--hi); letter-spacing: 0.05em;
+      text-shadow: 0 1px 8px rgba(0,0,0,0.85);
+      pointer-events: none;
+      user-select: none;
+      line-height: 1;
+      white-space: nowrap;
     }
 
     /* ── World Seed ── */
+    .wg-seed { width: 186px; }
     .seed-body { display: flex; align-items: center; gap: 0.4rem; }
 
     #seed-input {
@@ -521,23 +514,21 @@
   <!-- ── Bottom widgets — left-aligned row ─────────────────── -->
   <div id="ui-panel">
 
-    <!-- Time of Day first -->
-    <div class="wg wg-tod g">
-      <div class="wg-lbl">Time of Day</div>
-      <div class="tod-body">
-        <span id="tod-display">12:00</span>
-        <div class="tod-track">
-          <input type="range" id="tod-slider" min="0" max="1" step="0.001" value="0.45" />
-        </div>
-      </div>
-    </div>
-
-    <!-- World Seed second -->
+    <!-- World Seed on top -->
     <div class="wg wg-seed g">
       <div class="wg-lbl">World Seed</div>
       <div class="seed-body">
         <input type="number" id="seed-input" placeholder="137" />
         <button id="seed-btn" title="Regenerate">&#8635;</button>
+      </div>
+    </div>
+
+    <!-- Time of Day dial below -->
+    <div class="wg wg-tod g">
+      <div class="wg-lbl">Time of Day</div>
+      <div class="tod-dial-wrap">
+        <canvas id="tod-dial" width="296" height="296"></canvas>
+        <div id="tod-display">12:00</div>
       </div>
     </div>
 

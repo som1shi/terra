@@ -38,12 +38,15 @@ fn place_vegetation(@builtin(global_invocation_id) id: vec3u) {
     let h = textureLoad(heightTex, coord, 0).r;
     let N = normalize(textureLoad(normalTex, coord, 0).xyz * 2.0 - 1.0);
 
-    // 0.062 ≈ (seaLevel + snapThreshold) / HEIGHT_SCALE = (5 + 30) / 600
-    // Trees below this are either underwater or on terrain snapped below the ocean plane.
-    if (h < 0.062 || h > 0.28 || N.y < 0.75) { return; }
+    if (h < 0.12 || h > 0.28 || N.y < 0.75) { return; }
 
-    let flow = textureLoad(smoothAccumTex, coord, 0).r;
-    if (log(max(flow, 1.0)) > 2.8) { return; }
+    var maxFlow = textureLoad(smoothAccumTex, coord, 0).r;
+    let cardinals = array<vec2i, 4>(vec2i(-1,0), vec2i(1,0), vec2i(0,-1), vec2i(0,1));
+    for (var i = 0; i < 4; i++) {
+        let nc = clamp(coord + cardinals[i], vec2i(0), vec2i(SIZE - 1));
+        maxFlow = max(maxFlow, textureLoad(smoothAccumTex, nc, 0).r);
+    }
+    if (log(max(maxFlow, 1.0)) > 2.2) { return; }
 
     let clusterHash = hash2D(floor(vec2f(f32(coord.x), f32(coord.y)) / 32.0));
     let threshold   = 0.03 * clusterHash;

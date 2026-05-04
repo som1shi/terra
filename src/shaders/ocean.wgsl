@@ -61,7 +61,6 @@ fn vs_main(@builtin(vertex_index) vi: u32) -> VOut {
     return out;
 }
 
-// Manual bilinear blend since rgba32float can't use textureSample without float32-filterable
 fn sampleOcean(wx: f32, wz: f32) -> vec4f {
     let N  = i32(OCEAN_N);
     let u  = wx / TILE_WORLD * f32(OCEAN_N);
@@ -111,7 +110,6 @@ fn aces(x: vec3f) -> vec3f {
 fn fs_main(in: VOut) -> @location(0) vec4f {
     let d = sampleOcean(in.raw_uv.x, in.raw_uv.y);
 
-    // N = (-dH/dx, 1, -dH/dz) from gradient texture
     let slope_x = d.g;
     let slope_z = d.b;
     let N_vec   = normalize(vec3f(-slope_x, 1.0, -slope_z));
@@ -122,7 +120,6 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     let sunElevation = sunDir.y;
     let dayFactor    = smoothstep(-0.05, 0.15, sunElevation);
 
-    // Fresnel (Schlick)
     let NdotV   = max(dot(N_vec, V), 0.0);
     let fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);
 
@@ -130,7 +127,6 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     let skyRefl = skyColor(reflDir, sunDir) * fresnel;
 
     let deepBlue = vec3f(0.02, 0.09, 0.20);
-    // Night base is much darker; moonlight adds ambient based on moonIntensity
     let moonIntensity = globals.moonIntensity;
     let ambient = deepBlue * (0.015 + 0.285 * dayFactor + 0.10 * moonIntensity) * (1.0 - fresnel);
 
@@ -141,7 +137,6 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     let refl_sun = reflect(-sunDir, N_vec);
     let spec     = pow(max(dot(refl_sun, V), 0.0), 256.0) * dayFactor * 3.0;
 
-    // Moon specular: narrow glitter strip on water surface
     let moonDir   = globals.moonDir;
     let refl_moon = reflect(-moonDir, N_vec);
     let spec_moon = pow(max(dot(refl_moon, V), 0.0), 512.0) * moonIntensity * 2.5;

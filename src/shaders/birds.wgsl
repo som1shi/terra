@@ -1,21 +1,25 @@
 struct Globals {
-    viewProj    : mat4x4f,
-    invViewProj : mat4x4f,
-    sunDir      : vec3f,
-    _pad0       : f32,
-    cameraPos   : vec3f,
-    _pad1       : f32,
-    time        : f32,
-    timeOfDay   : f32,
-    seaLevel    : f32,
-    _pad2       : f32,
+    viewProj      : mat4x4f,
+    invViewProj   : mat4x4f,
+    sunDir        : vec3f,
+    _pad0         : f32,
+    cameraPos     : vec3f,
+    _pad1         : f32,
+    time          : f32,
+    timeOfDay     : f32,
+    seaLevel      : f32,
+    seed          : f32,
+    resolution    : vec2f,
+    moonIntensity : f32,
+    _pad2         : f32,
+    moonDir       : vec3f,
+    _pad3         : f32,
 };
 
 @group(0) @binding(0) var<uniform>       globals : Globals;
 @group(0) @binding(1) var<storage, read> birds   : array<vec4f>;
 
 struct VertIn {
-    // xyz = local-space position, w = flap weight (0=body, 0.4=elbow, 1=tip)
     @location(0)             vertex  : vec4f,
     @builtin(instance_index) instIdx : u32,
 };
@@ -33,14 +37,12 @@ fn vs_main(in: VertIn) -> VertOut {
     let pos = birds[i].xyz;
     let fwd = normalize(birds[i + 1u].xyz);
 
-    // Build orthonormal frame
     let world_up = vec3f(0.0, 1.0, 0.0);
     let alt_up   = vec3f(1.0, 0.0, 0.0);
     let ref_up   = select(world_up, alt_up, abs(dot(fwd, world_up)) > 0.99);
     let right    = normalize(cross(ref_up, fwd));
     let up       = normalize(cross(fwd, right));
 
-    // Flap: ~9 Hz, per-bird phase, wings sweep slightly forward on up-stroke
     let flapPhase = globals.time * 9.0 + f32(in.instIdx) * 0.713;
     let flapSin   = sin(flapPhase);
     let flapY     =  flapSin              * in.vertex.w * 0.28;
@@ -53,9 +55,7 @@ fn vs_main(in: VertIn) -> VertOut {
                  + up    * (lp.y * scale)
                  + fwd   * (lp.z * scale);
 
-    // Per-vertex approximate normal: tilt outward on wings (dihedral ~ 16°).
-    // Wings are angled up by 0.28 y per 1.0 x, so normal tilts inward by that ratio.
-    let dihTilt      = -in.vertex.x * 0.28;          // inward tilt in local X
+    let dihTilt      = -in.vertex.x * 0.28;
     let local_norm   = normalize(vec3f(dihTilt, 1.0, 0.0));
     let world_norm   = normalize(right * local_norm.x + up * local_norm.y);
 
@@ -72,22 +72,19 @@ fn fs_main(in: VertOut) -> @location(0) vec4f {
     let sunDir    = globals.sunDir;
     let dayFactor = smoothstep(-0.05, 0.2, sunDir.y);
 
-    // Body centre = dark charcoal; wing tips = slightly warmer brown
-    let bodyColor = vec3f(0.07, 0.06, 0.08);   // dark with faint purple (starling)
-    let wingColor = vec3f(0.16, 0.13, 0.11);   // slightly warmer at tips
+    let bodyColor = vec3f(0.07, 0.06, 0.08);
+    let wingColor = vec3f(0.16, 0.13, 0.11);
     let base      = mix(bodyColor, wingColor, smoothstep(0.0, 1.0, in.flapW));
 
-    // Diffuse – use abs so both faces lit (bird is thin)
     let NdotL   = abs(dot(normalize(in.normal), sunDir));
     let diffuse = NdotL * dayFactor * 0.65;
-    let ambient = mix(0.20, 0.35, dayFactor);  // boosted so birds read in any lighting
+    let ambient = mix(0.20, 0.35, dayFactor);
 
-    // Blinn-Phong glimmer (iridescent starling sheen)
     let viewDir = normalize(globals.cameraPos - in.worldPos);
     let halfVec = normalize(sunDir + viewDir);
     let spec    = pow(max(0.0, abs(dot(normalize(in.normal), halfVec))), 20.0)
                   * 0.30 * dayFactor;
-    let specCol = vec3f(0.4, 0.8, 0.5) * spec;  // greenish iridescence
+    let specCol = vec3f(0.4, 0.8, 0.5) * spec;
 
     return vec4f(base * (ambient + diffuse) + specCol, 1.0);
 }

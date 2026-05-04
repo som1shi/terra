@@ -13,7 +13,6 @@ export class Atmosphere {
     private device: GPUDevice,
     private format: GPUTextureFormat,
     private globalsBuffer: GPUBuffer,
-    private seed: number,
   ) {}
 
   async init(): Promise<void> {

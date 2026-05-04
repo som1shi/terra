@@ -110,7 +110,7 @@ export class Renderer {
     this.ui.setStatus('Initializing atmosphere...', 93);
 
     try {
-      this.atmosphere = new Atmosphere(this.device, HDR_FORMAT, this.globalsBuffer, this.seed);
+      this.atmosphere = new Atmosphere(this.device, HDR_FORMAT, this.globalsBuffer);
       await this.atmosphere.init();
     } catch (error) {
       console.error('Renderer: Failed to initialize atmosphere:', error);
@@ -183,12 +183,10 @@ export class Renderer {
     const sunZ = -Math.cos(theta) * 0.866;
     const sunLen = Math.sqrt(sunX * sunX + sunY * sunY + sunZ * sunZ);
 
-    // Moon is opposite the sun (full-moon arc: at zenith at midnight, below horizon at noon)
     const moonDirX = -sunX / sunLen;
     const moonDirY = -sunY / sunLen;
     const moonDirZ = -sunZ / sunLen;
 
-    // moonIntensity: 0 when below horizon or during day, 1 when moon at zenith at midnight
     const sunElevation = sunY / sunLen;
     const dayFactor = Math.max(0, Math.min(1, (sunElevation + 0.05) / 0.20));
     const nightFactor = 1.0 - dayFactor;
@@ -221,12 +219,10 @@ export class Renderer {
     view.setFloat32(172, this.seed, true);
     view.setFloat32(176, this.canvas.width, true);
     view.setFloat32(180, this.canvas.height, true);
-    view.setFloat32(184, moonIntensity, true);  // offset 184: moonIntensity (was _pad3.x)
-    // offset 188: _pad2 (zero-initialized)
-    view.setFloat32(192, moonDirX, true);       // offset 192: moonDir.x
-    view.setFloat32(196, moonDirY, true);       // offset 196: moonDir.y
-    view.setFloat32(200, moonDirZ, true);       // offset 200: moonDir.z
-    // offset 204: _pad3 (zero-initialized)
+    view.setFloat32(184, moonIntensity, true);
+    view.setFloat32(192, moonDirX, true);
+    view.setFloat32(196, moonDirY, true);
+    view.setFloat32(200, moonDirZ, true);
 
     this.device.queue.writeBuffer(this.globalsBuffer, 0, globalsData);
 

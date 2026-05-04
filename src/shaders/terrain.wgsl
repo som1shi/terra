@@ -51,7 +51,6 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let uv = in.uv;
     let h  = sampleHeight(uv);
 
-    // Two-scale noise on snap threshold produces organic coastline that doesn't follow the grid
     let snapNoise  = (multiNoise(in.xz * 0.003) - 0.5) * 30.0
                    + (valueNoise(in.xz * 0.01)  - 0.5) * 14.0;
     let snapThresh = globals.seaLevel + 30.0 + snapNoise;
@@ -227,15 +226,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let ind_dir  = normalize(sunDir * vec3f(-1.0, 0.0, -1.0));
     let ind_term = max(dot(N, ind_dir), 0.0) * vec3f(0.40, 0.28, 0.20) * dayFactor;
 
-    // Moon lighting: directional term (no shadow for performance — moonIntensity already encodes horizon clip)
     let moonDir       = globals.moonDir;
     let moonIntensity = globals.moonIntensity;
     let moonNdotL     = max(dot(N, moonDir), 0.0);
     let moon_term     = moonNdotL * vec3f(0.010, 0.011, 0.018) * moonIntensity;
 
-    // Night sky ambient: starlight base + moon-scattered ambient that scales with moonIntensity
     let night_amb = vec3f(0.004, 0.005, 0.010) * moonIntensity
-                  + vec3f(0.0003, 0.0003, 0.0009); // irreducible starlight
+                  + vec3f(0.0003, 0.0003, 0.0009);
 
     let sky_term = (0.5 + 0.5 * N.y) * vec3f(0.16, 0.20, 0.28) * dayFactor
                  + (0.5 + 0.5 * N.y) * night_amb * (1.0 - dayFactor);
@@ -273,7 +270,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let dirtColor  = triDirt  * mix(0.85, 1.10, dNoise);
     let rockColor  = triRock  * mix(0.80, 1.20, rNoise);
 
-    // Per-pixel coast from bilinear heightmap eliminates vertex-grid staircase edges
     let coastNoise  = (multiNoise(in.world_pos.xz * 0.003) - 0.5) * 30.0
                     + (valueNoise(in.world_pos.xz * 0.01)  - 0.5) * 14.0;
     let coastThresh = globals.seaLevel + 30.0 + coastNoise;
@@ -297,7 +293,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
                             smoothstep(0.36 + jitter, 0.62 + jitter, altitude));
 
     let slope_cliff = smoothstep(0.15 + jitter * 0.3, 0.42 + jitter * 0.3, slope);
-    // Snap-displaced geometry: large positive (h_smooth - world_pos.y) means vertex was pulled below natural height
     let snap_cliff  = smoothstep(4.0, 16.0, h_smooth - in.world_pos.y);
     terrain_color   = mix(terrain_color, rockColor, max(slope_cliff, snap_cliff));
 
@@ -305,7 +300,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let snow_flat = smoothstep(0.72, 0.88, N_b.y);
     terrain_color = mix(terrain_color, snow, snow_alt * snow_flat);
 
-    // Bilinear flow sampling with 3x3 distance-weighted kernel for smooth river edges
     var flowSum  = 0.0;
     var flowMax  = 0.0;
     var flowW    = 0.0;
@@ -416,7 +410,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let sheenColor = vec3f(0.02, 0.18, 0.52);
     color          = color + sheenColor * (riverBlend * 0.12 + lakeFill) * dayFactor;
 
-    // Shore blend: fade terrain near sea level toward ocean color to hide mesh-intersection stripes
     let shore_dist  = clamp(h_rel, 0.0, 1.0e9);
     let shore_blend = (1.0 - smoothstep(0.0, 35.0, shore_dist)) * mix(0.08, 0.55, dayFactor);
     color           = mix(color, vec3f(0.04, 0.10, 0.22) * max(dayFactor, 0.1), shore_blend);

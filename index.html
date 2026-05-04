@@ -547,7 +547,6 @@
   </div>
 
   <script>
-    // ── Seed input sync ──────────────────────────────────────
     const params = new URLSearchParams(window.location.search);
     document.getElementById('seed-input').value = params.get('seed') || '137';
 
@@ -564,14 +563,12 @@
       if (e.key === 'Enter') applySeed();
     });
 
-    // ── Animated film grain ──────────────────────────────────
     (function () {
       const canvas = document.getElementById('grain-canvas');
       const ctx    = canvas.getContext('2d');
       let timer    = null;
 
       function resize() {
-        // 1/3 native res → bilinear upscale = smooth film grain
         canvas.width  = Math.ceil(window.innerWidth  / 3);
         canvas.height = Math.ceil(window.innerHeight / 3);
       }
@@ -586,7 +583,7 @@
           d[i + 3] = 36;
         }
         ctx.putImageData(img, 0, 0);
-        timer = setTimeout(() => requestAnimationFrame(drawGrain), 42); // ~24 fps
+        timer = setTimeout(() => requestAnimationFrame(drawGrain), 42);
       }
 
       window.addEventListener('resize', resize);

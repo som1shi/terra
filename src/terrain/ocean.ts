@@ -44,13 +44,11 @@ function mulberry32(seed: number): () => number {
 }
 
 export class Ocean {
-  // Render pipeline
   private renderPipeline!: GPURenderPipeline;
   private renderBindGroup!: GPUBindGroup;
   private oceanTex!: GPUTexture;
   private oceanTexView!: GPUTextureView;
 
-  // Compute pipeline
   private h0Buf!: GPUBuffer;
   private freqBuf!: GPUBuffer;
   private specBuf!: GPUBuffer;
@@ -79,8 +77,8 @@ export class Ocean {
   private uploadSpectrumBuffers(): void {
     const rng    = mulberry32(42);
     const sz     = N * N;
-    const h0Data   = new Float32Array(sz * 4); // (h0Re, h0Im, h0cRe, h0cIm)
-    const freqData = new Float32Array(sz * 4); // (omega, kx, kz, 0)
+    const h0Data   = new Float32Array(sz * 4);
+    const freqData = new Float32Array(sz * 4);
 
     for (let r = 0; r < N; r++) {
       for (let c = 0; c < N; c++) {
@@ -122,7 +120,6 @@ export class Ocean {
     });
     this.device.queue.writeBuffer(this.freqBuf, 0, freqData);
 
-    // 2 vec4f per cell = 32 bytes per cell
     this.specBuf = this.device.createBuffer({
       label: 'Ocean Spec',
       size: sz * 32,
@@ -244,20 +241,18 @@ export class Ocean {
     });
   }
 
-  // Encodes all four compute passes (spectrum → FFT rows → FFT cols → pack).
-  // Must be called on the command encoder before the render pass each frame.
   encodeCompute(encoder: GPUCommandEncoder): void {
     const pass = encoder.beginComputePass({ label: 'Ocean FFT' });
     pass.setBindGroup(0, this.computeBindGroup);
 
     pass.setPipeline(this.spectrumPipeline);
-    pass.dispatchWorkgroups(N / 8, N / 8); // 16×16 workgroups of 8×8 threads
+    pass.dispatchWorkgroups(N / 8, N / 8);
 
     pass.setPipeline(this.fftRowsPipeline);
-    pass.dispatchWorkgroups(N);            // 128 workgroups of 64 threads, one per row
+    pass.dispatchWorkgroups(N);
 
     pass.setPipeline(this.fftColsPipeline);
-    pass.dispatchWorkgroups(N);            // 128 workgroups of 64 threads, one per column
+    pass.dispatchWorkgroups(N);
 
     pass.setPipeline(this.packPipeline);
     pass.dispatchWorkgroups(N / 8, N / 8);

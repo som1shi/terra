@@ -1,3 +1,43 @@
+function srgbChannelToLinear255(c: number): number {
+  const x = c / 255;
+  return x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+}
+
+function linearToSrgb255Channel(x: number): number {
+  const c = x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
+  return Math.min(255, Math.max(0, Math.round(c * 255)));
+}
+
+function rgb255ToOklab(r: number, g: number, b: number): [number, number, number] {
+  const rl = srgbChannelToLinear255(r);
+  const gl = srgbChannelToLinear255(g);
+  const bl = srgbChannelToLinear255(b);
+  const l = 0.4122214708 * rl + 0.5363325363 * gl + 0.0514459929 * bl;
+  const m = 0.2119034982 * rl + 0.6806995451 * gl + 0.1073969566 * bl;
+  const s = 0.0883024619 * rl + 0.2817188376 * gl + 0.6299787005 * bl;
+  const l_ = Math.cbrt(l);
+  const m_ = Math.cbrt(m);
+  const s_ = Math.cbrt(s);
+  return [
+    0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+    1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+    0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+  ];
+}
+
+function oklabToRgb255(L: number, a: number, bCh: number): [number, number, number] {
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * bCh;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * bCh;
+  const s_ = L - 0.0894841775 * a - 1.2914855480 * bCh;
+  const l = l_ * l_ * l_;
+  const m = m_ * m_ * m_;
+  const s = s_ * s_ * s_;
+  const r = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+  const g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+  const bl = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s;
+  return [linearToSrgb255Channel(r), linearToSrgb255Channel(g), linearToSrgb255Channel(bl)];
+}
+
 export class UI {
   private loadingOverlay: HTMLElement;
   private loadingBar: HTMLElement;
@@ -57,7 +97,6 @@ export class UI {
     const rect = this.todDial.getBoundingClientRect();
     const dx = e.clientX - (rect.left + rect.width / 2);
     const dy = e.clientY - (rect.top + rect.height / 2);
-    // atan2(dx, -dy): angle from 12 o'clock going clockwise
     const angle = Math.atan2(dx, -dy);
     const val = ((angle / (Math.PI * 2)) + 1) % 1;
     this.todValue = val;
@@ -69,30 +108,28 @@ export class UI {
   private drawDial(): void {
     const canvas = this.todDial;
     const ctx = canvas.getContext('2d')!;
-    const W = canvas.width;   // internal pixels (296)
+    const W = canvas.width;
     const H = canvas.height;
     const cx = W / 2;
     const cy = H / 2;
-    const R = cx * 0.74;      // ring center radius
-    const lineW = cx * 0.145; // ring half-width
+    const R = cx * 0.74;
+    const lineW = cx * 0.145;
 
     ctx.clearRect(0, 0, W, H);
 
-    // Gradient ring — 360 arc segments blended together
-    const SEGS = 360;
-    for (let i = 0; i < SEGS; i++) {
-      const t = i / SEGS;
-      const a0 = t * Math.PI * 2 - Math.PI / 2;
-      const a1 = (i + 1.5) / SEGS * Math.PI * 2 - Math.PI / 2;
+    const SEG = 1024;
+    const lw = lineW * 2 + 1.35;
+    ctx.lineCap = 'butt';
+    for (let i = 0; i < SEG; i++) {
+      const a0 = (i / SEG) * Math.PI * 2 - Math.PI / 2;
+      const a1 = ((i + 1) / SEG) * Math.PI * 2 - Math.PI / 2;
       ctx.beginPath();
       ctx.arc(cx, cy, R, a0, a1);
-      ctx.strokeStyle = this.todColor(t);
-      ctx.lineWidth = lineW * 2;
-      ctx.lineCap = 'butt';
+      ctx.strokeStyle = this.todColor((i + 0.5) / SEG);
+      ctx.lineWidth = lw;
       ctx.stroke();
     }
 
-    // Subtle dark edge lines on inner/outer ring rim
     ctx.lineWidth = 2;
     ctx.strokeStyle = 'rgba(0,4,18,0.60)';
     ctx.beginPath();
@@ -102,7 +139,6 @@ export class UI {
     ctx.arc(cx, cy, R + lineW - 1, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Hour tick dots just outside the ring (12 per revolution)
     const tickR = R + lineW + 7;
     for (let h = 0; h < 12; h++) {
       const a = (h / 12) * Math.PI * 2 - Math.PI / 2;
@@ -112,12 +148,10 @@ export class UI {
       ctx.fill();
     }
 
-    // Knob position on the ring
     const kAngle = this.todValue * Math.PI * 2 - Math.PI / 2;
     const kx = cx + Math.cos(kAngle) * R;
     const ky = cy + Math.sin(kAngle) * R;
 
-    // Soft glow halo behind knob
     const halo = ctx.createRadialGradient(kx, ky, 0, kx, ky, 22);
     halo.addColorStop(0, 'rgba(210, 232, 255, 0.22)');
     halo.addColorStop(1, 'rgba(210, 232, 255, 0)');
@@ -126,7 +160,6 @@ export class UI {
     ctx.fillStyle = halo;
     ctx.fill();
 
-    // Knob — white circle with drop shadow
     ctx.save();
     ctx.shadowColor = 'rgba(0,0,0,0.60)';
     ctx.shadowBlur = 10;
@@ -138,7 +171,6 @@ export class UI {
     ctx.fill();
     ctx.restore();
 
-    // Knob specular ring
     ctx.beginPath();
     ctx.arc(kx, ky, 9, 0, Math.PI * 2);
     ctx.strokeStyle = 'rgba(190, 222, 255, 0.60)';
@@ -146,27 +178,65 @@ export class UI {
     ctx.stroke();
   }
 
-  // Interpolates the same color stops as the original linear gradient
   private todColor(t: number): string {
-    const stops: [number, [number, number, number]][] = [
-      [0.00, [8,   8,   32]],
-      [0.17, [22,  40,  120]],
-      [0.36, [216, 118, 48]],
-      [0.50, [240, 204, 80]],
-      [0.63, [96,  184, 232]],
-      [0.82, [22,  40,  120]],
-      [1.00, [8,   8,   32]],
+    const midnight = [10, 20, 76] as const;
+    const indigo = [36, 44, 138] as const;
+    const violet = [82, 56, 178] as const;
+    const magentaRose = [168, 58, 148] as const;
+    const coral = [228, 88, 68] as const;
+    const sunset = [236, 108, 38] as const;
+    const amber = [252, 168, 62] as const;
+    const honey = [255, 228, 158] as const;
+    const seaFoam = [158, 232, 212] as const;
+    const aqua = [72, 188, 238] as const;
+    const sky = [38, 148, 248] as const;
+
+    const stops: [number, readonly [number, number, number]][] = [
+      [0.00, midnight],
+      [0.045, indigo],
+      [0.10, violet],
+      [0.155, magentaRose],
+      [0.205, coral],
+      [0.25, sunset],
+      [0.295, amber],
+      [0.34, honey],
+      [0.39, seaFoam],
+      [0.445, aqua],
+      [0.5, sky],
+      [0.555, aqua],
+      [0.61, seaFoam],
+      [0.66, honey],
+      [0.705, amber],
+      [0.75, sunset],
+      [0.795, coral],
+      [0.845, magentaRose],
+      [0.90, violet],
+      [0.955, indigo],
+      [1.00, midnight],
     ];
-    let lo = stops[0], hi = stops[stops.length - 1];
+
+    let x = t % 1;
+    if (x < 0) x += 1;
+
+    let lo = stops[0];
+    let hi = stops[stops.length - 1];
     for (let i = 0; i < stops.length - 1; i++) {
-      if (t >= stops[i][0] && t <= stops[i + 1][0]) {
-        lo = stops[i]; hi = stops[i + 1]; break;
+      if (x >= stops[i][0] && x <= stops[i + 1][0]) {
+        lo = stops[i];
+        hi = stops[i + 1];
+        break;
       }
     }
-    const f = hi[0] > lo[0] ? (t - lo[0]) / (hi[0] - lo[0]) : 0;
-    const r = Math.round(lo[1][0] + f * (hi[1][0] - lo[1][0]));
-    const g = Math.round(lo[1][1] + f * (hi[1][1] - lo[1][1]));
-    const b = Math.round(lo[1][2] + f * (hi[1][2] - lo[1][2]));
+
+    const span = hi[0] - lo[0];
+    const u = span > 1e-9 ? (x - lo[0]) / span : 0;
+
+    const lab0 = rgb255ToOklab(lo[1][0], lo[1][1], lo[1][2]);
+    const lab1 = rgb255ToOklab(hi[1][0], hi[1][1], hi[1][2]);
+    const L = lab0[0] + u * (lab1[0] - lab0[0]);
+    const a = lab0[1] + u * (lab1[1] - lab0[1]);
+    const bLab = lab0[2] + u * (lab1[2] - lab0[2]);
+    const [r, g, b] = oklabToRgb255(L, a, bLab);
     return `rgb(${r},${g},${b})`;
   }
 

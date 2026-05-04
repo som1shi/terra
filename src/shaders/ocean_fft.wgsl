@@ -1,28 +1,29 @@
 struct Globals {
-    viewProj    : mat4x4f,
-    invViewProj : mat4x4f,
-    sunDir      : vec3f,
-    _pad0       : f32,
-    cameraPos   : vec3f,
-    _pad1       : f32,
-    time        : f32,
-    timeOfDay   : f32,
-    seaLevel    : f32,
-    _pad2       : f32,
-    resolution  : vec2f,
-    _pad3       : vec2f,
+    viewProj      : mat4x4f,
+    invViewProj   : mat4x4f,
+    sunDir        : vec3f,
+    _pad0         : f32,
+    cameraPos     : vec3f,
+    _pad1         : f32,
+    time          : f32,
+    timeOfDay     : f32,
+    seaLevel      : f32,
+    seed          : f32,
+    resolution    : vec2f,
+    moonIntensity : f32,
+    _pad2         : f32,
+    moonDir       : vec3f,
+    _pad3         : f32,
 };
 
 const N  : u32 = 128u;
 const PI : f32 = 3.14159265358979323846f;
 
 @group(0) @binding(0) var<uniform>             globals : Globals;
-@group(0) @binding(1) var<storage, read>       h0Buf   : array<vec4f>; // (h0Re,h0Im,h0cRe,h0cIm)
-@group(0) @binding(2) var<storage, read>       freqBuf : array<vec4f>; // (omega,kx,kz,0)
-@group(0) @binding(3) var<storage, read_write> specBuf : array<vec4f>; // 2×vec4f per cell: (htRe,htIm,sxRe,sxIm),(szRe,szIm,0,0)
+@group(0) @binding(1) var<storage, read>       h0Buf   : array<vec4f>;
+@group(0) @binding(2) var<storage, read>       freqBuf : array<vec4f>;
+@group(0) @binding(3) var<storage, read_write> specBuf : array<vec4f>;
 @group(0) @binding(4) var                      oceanOut: texture_storage_2d<rgba32float, write>;
-
-// ── Spectrum update ──────────────────────────────────────────────────────────
 
 @compute @workgroup_size(8, 8)
 fn spectrum_update(@builtin(global_invocation_id) gid: vec3u) {
@@ -35,7 +36,6 @@ fn spectrum_update(@builtin(global_invocation_id) gid: vec3u) {
     let cw = cos(wt);
     let sw = sin(wt);
 
-    // h(k,t) = h0(k)·e^(iωt) + h0(-k)*·e^(-iωt)
     let e1r = h0.x * cw - h0.y * sw;
     let e1i = h0.x * sw + h0.y * cw;
     let e2r = h0.z * cw + h0.w * sw;
@@ -43,20 +43,14 @@ fn spectrum_update(@builtin(global_invocation_id) gid: vec3u) {
     let htRe = e1r + e2r;
     let htIm = e1i + e2i;
 
-    // slope = i·k·h(k,t):  (a+ib)·i = -b+ia
     let kx = freq.y; let kz = freq.z;
     specBuf[idx * 2u]      = vec4f(htRe, htIm, -kx * htIm, kx * htRe);
     specBuf[idx * 2u + 1u] = vec4f(-kz * htIm, kz * htRe, 0.0, 0.0);
 }
 
-// ── Shared memory for in-place FFT ───────────────────────────────────────────
-
-// One workgroup handles one row or one column of N=128 complex samples.
-// smA packs (htRe, htIm, sxRe, sxIm); smB packs (szRe, szIm, 0, 0).
 var<workgroup> smA: array<vec4f, 128>;
 var<workgroup> smB: array<vec4f, 128>;
 
-// 7-bit reversal (for N=128 = 2^7)
 fn bitrev7(v: u32) -> u32 {
     var x = v & 0x7fu;
     x = ((x >> 1u) & 0x55u) | ((x & 0x55u) << 1u);
@@ -65,15 +59,13 @@ fn bitrev7(v: u32) -> u32 {
     return x >> 1u;
 }
 
-// One butterfly stage. thread tid (0..63) handles one non-overlapping pair.
-// Uses positive twiddle angle for IFFT. Caller provides workgroupBarrier after.
 fn butterfly_stage(tid: u32, s: u32) {
     let half_m = 1u << (s - 1u);
     let j      = tid % half_m;
     let top    = (tid / half_m) * (half_m << 1u) + j;
     let bot    = top + half_m;
 
-    let angle = 2.0 * PI * f32(j) / f32(half_m << 1u);  // +angle → IFFT
+    let angle = 2.0 * PI * f32(j) / f32(half_m << 1u);
     let wr = cos(angle);
     let wi = sin(angle);
 
@@ -90,19 +82,15 @@ fn butterfly_stage(tid: u32, s: u32) {
     smB[bot] = vec4f(tb.x - wRe2, tb.y - wIm2, 0.0, 0.0);
 }
 
-// ── Row IFFT ─────────────────────────────────────────────────────────────────
-
-// Dispatch: (N, 1, 1) — one workgroup per row, 64 threads per workgroup.
 @compute @workgroup_size(64)
 fn fft_rows(
     @builtin(local_invocation_id) lid: vec3u,
     @builtin(workgroup_id)        wid: vec3u,
 ) {
     let row  = wid.x;
-    let tid  = lid.x;   // 0..63
+    let tid  = lid.x;
     let base = row * N;
 
-    // Load two elements per thread into bit-reversed shared memory slots.
     let ra = bitrev7(tid);
     let rb = bitrev7(tid + 64u);
     smA[ra] = specBuf[(base + tid)       * 2u];
@@ -119,7 +107,6 @@ fn fft_rows(
     butterfly_stage(tid, 6u); workgroupBarrier();
     butterfly_stage(tid, 7u); workgroupBarrier();
 
-    // Scale by 1/N (first half of 2D IFFT normalization).
     let inv = 1.0 / f32(N);
     smA[tid]       *= inv;
     smA[tid + 64u] *= inv;
@@ -133,9 +120,6 @@ fn fft_rows(
     specBuf[(base + tid + 64u) * 2u + 1u] = smB[tid + 64u];
 }
 
-// ── Column IFFT ──────────────────────────────────────────────────────────────
-
-// Dispatch: (N, 1, 1) — one workgroup per column, 64 threads per workgroup.
 @compute @workgroup_size(64)
 fn fft_cols(
     @builtin(local_invocation_id) lid: vec3u,
@@ -173,9 +157,6 @@ fn fft_cols(
     specBuf[((tid + 64u) * N + col) * 2u + 1u] = smB[tid + 64u];
 }
 
-// ── Pack to texture ───────────────────────────────────────────────────────────
-
-// Writes (height, slopeX, slopeZ, 0) real parts into oceanOut for the render shader.
 @compute @workgroup_size(8, 8)
 fn ocean_pack(@builtin(global_invocation_id) gid: vec3u) {
     if (gid.x >= N || gid.y >= N) { return; }

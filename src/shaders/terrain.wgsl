@@ -24,7 +24,6 @@ struct Globals {
 @group(0) @binding(5) var aoTex            : texture_2d<f32>;
 @group(0) @binding(6) var aoSampler        : sampler;
 @group(0) @binding(7) var accumTex         : texture_2d<f32>;
-@group(0) @binding(8) var rawAccumTex      : texture_2d<f32>;
 
 const HEIGHT_SCALE : f32 = 600.0;
 const WORLD_HALF   : f32 = 2048.0;
@@ -126,12 +125,11 @@ fn sampleHeightBilinear(uv: vec2f) -> f32 {
     let pix = uv * 512.0 - 0.5;
     let pi  = vec2i(i32(floor(pix.x)), i32(floor(pix.y)));
     let pf  = fract(pix);
-    let t   = pf * pf * pf * (pf * (pf * 6.0 - 15.0) + 10.0);
     let h00 = textureLoad(heightmapTex, clamp(pi + vec2i(0, 0), vec2i(0), vec2i(511)), 0).r;
     let h10 = textureLoad(heightmapTex, clamp(pi + vec2i(1, 0), vec2i(0), vec2i(511)), 0).r;
     let h01 = textureLoad(heightmapTex, clamp(pi + vec2i(0, 1), vec2i(0), vec2i(511)), 0).r;
     let h11 = textureLoad(heightmapTex, clamp(pi + vec2i(1, 1), vec2i(0), vec2i(511)), 0).r;
-    return mix(mix(h00, h10, t.x), mix(h01, h11, t.x), t.y) * HEIGHT_SCALE;
+    return mix(mix(h00, h10, pf.x), mix(h01, h11, pf.x), pf.y) * HEIGHT_SCALE;
 }
 
 fn getSoftShadow(worldPos: vec3f, lightDir: vec3f) -> f32 {
@@ -203,22 +201,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let tod    = globals.timeOfDay;
     let uv     = in.uv;
 
-    let ddx_uv  = dpdx(uv);
-    let ddy_uv  = dpdy(uv);
-    let maxGrad = max(length(ddx_uv), length(ddy_uv));
-    let nScale  = min(1.0, 4.0 / (maxGrad * 512.0));
-    let aoScale = min(1.0, 8.0 / (maxGrad * 512.0));
-
-    let N = normalize(textureSampleGrad(normalTex, normalSampler, uv,
-                          ddx_uv * nScale, ddy_uv * nScale).xyz * 2.0 - 1.0);
+    let N = normalize(textureSampleLevel(normalTex, normalSampler, uv, 0.0).xyz * 2.0 - 1.0);
 
     const BR : f32 = TEXEL_SIZE * 8.0;
     let N_b = normalize(
-        textureSampleGrad(normalTex, normalSampler, uv,                    ddx_uv * nScale, ddy_uv * nScale).xyz * 2.0 - 1.0 +
-        textureSampleGrad(normalTex, normalSampler, uv + vec2f( BR,  0.0), ddx_uv * nScale, ddy_uv * nScale).xyz * 2.0 - 1.0 +
-        textureSampleGrad(normalTex, normalSampler, uv + vec2f(-BR,  0.0), ddx_uv * nScale, ddy_uv * nScale).xyz * 2.0 - 1.0 +
-        textureSampleGrad(normalTex, normalSampler, uv + vec2f( 0.0,  BR), ddx_uv * nScale, ddy_uv * nScale).xyz * 2.0 - 1.0 +
-        textureSampleGrad(normalTex, normalSampler, uv + vec2f( 0.0, -BR), ddx_uv * nScale, ddy_uv * nScale).xyz * 2.0 - 1.0
+        textureSampleLevel(normalTex, normalSampler, uv,                     0.0).xyz * 2.0 - 1.0 +
+        textureSampleLevel(normalTex, normalSampler, uv + vec2f( BR,  0.0),  0.0).xyz * 2.0 - 1.0 +
+        textureSampleLevel(normalTex, normalSampler, uv + vec2f(-BR,  0.0),  0.0).xyz * 2.0 - 1.0 +
+        textureSampleLevel(normalTex, normalSampler, uv + vec2f( 0.0,  BR),  0.0).xyz * 2.0 - 1.0 +
+        textureSampleLevel(normalTex, normalSampler, uv + vec2f( 0.0, -BR),  0.0).xyz * 2.0 - 1.0
     );
 
     let h_smooth = sampleHeightBilinear(uv);
@@ -246,7 +237,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let sky_term = (0.5 + 0.5 * N.y) * vec3f(0.16, 0.20, 0.28) * dayFactor
                  + (0.5 + 0.5 * N.y) * night_amb * (1.0 - dayFactor);
 
-    let hbao        = textureSampleGrad(aoTex, aoSampler, uv, ddx_uv * aoScale, ddy_uv * aoScale).r;
+    let hbao        = textureSampleLevel(aoTex, aoSampler, uv, 0.0).r;
     let hbao_factor = mix(0.35, 1.0, hbao);
 
     let altitude = clamp(h_smooth / HEIGHT_SCALE, 0.0, 1.0);
@@ -329,43 +320,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let isFlat     = smoothstep(0.88, 0.96, N_b.y);
     let slopeMask  = 1.0 - smoothstep(0.96, 0.998, N_b.y);
 
-    // ── Lakes: 3 hash-seeded circles on flat terrain above coast ──
-    let sd   = globals.seed;
-    let p    = in.world_pos.xz;
-    let lp0  = vec2f(fract(sd * 0.34921) * 2600.0 - 1300.0, fract(sd * 0.62731) * 2600.0 - 1300.0);
-    let lp1  = vec2f(fract(sd * 0.18233) * 2600.0 - 1300.0, fract(sd * 0.49373) * 2600.0 - 1300.0);
-    let lp2  = vec2f(fract(sd * 0.75311) * 2600.0 - 1300.0, fract(sd * 0.26931) * 2600.0 - 1300.0);
-    let lr0  = mix(120.0, 220.0, fract(sd * 0.51723));
-    let lr1  = mix(90.0,  180.0, fract(sd * 0.84130));
-    let lr2  = mix(80.0,  160.0, fract(sd * 0.37261));
-    let aboveSea = smoothstep(globals.seaLevel + 20.0, globals.seaLevel + 65.0, h_smooth);
-    let l0   = (1.0 - smoothstep(lr0 * 0.55, lr0, length(p - lp0))) * isFlat * aboveSea;
-    let l1   = (1.0 - smoothstep(lr1 * 0.55, lr1, length(p - lp1))) * isFlat * aboveSea;
-    let l2   = (1.0 - smoothstep(lr2 * 0.55, lr2, length(p - lp2))) * isFlat * aboveSea;
-    let lakeBlend = max(max(l0, l1), l2);
-
-    // ── Rivers: 4 straight lines radiating from mountain centre ──
-    // Distance from point to line through origin at angle a: |p.x·sin(a) - p.y·cos(a)|
-    let a0 = fract(sd * 0.34921) * 6.28318;
-    let a1 = a0 + 1.5708;   // +90°
-    let a2 = a0 + 3.1416;   // +180°
-    let a3 = a0 + 4.7124;   // +270°
-    let distCenter = length(p);
-    let rWidth = mix(14.0, 55.0, smoothstep(300.0, 1900.0, distCenter));
-    let bankNoise = valueNoise(p * 0.006) * 0.5 + 0.75;  // 0.75–1.25× width variation
-    let eW = rWidth * bankNoise;
-    let d0 = abs(p.x * sin(a0) - p.y * cos(a0));
-    let d1 = abs(p.x * sin(a1) - p.y * cos(a1));
-    let d2 = abs(p.x * sin(a2) - p.y * cos(a2));
-    let d3 = abs(p.x * sin(a3) - p.y * cos(a3));
-    let riverMask = (1.0 - smoothstep(0.0, eW, min(min(d0, d1), min(d2, d3))))
-                  * smoothstep(globals.seaLevel + 8.0, globals.seaLevel + 48.0, h_smooth)
-                  * (1.0 - smoothstep(0.38, 0.52, altitude))
-                  * smoothstep(180.0, 420.0, distCenter)
-                  * (1.0 - snow_alt);
-    let riverLine = clamp(riverMask, 0.0, 1.0);
-
-    let riverBlend = max(lakeBlend, riverLine);
+    let riverNoise = multiNoise(in.world_pos.xz * 0.012) * 1.6 - 0.8;
+    let riverBlend = smoothstep(6.0 + riverNoise, 7.8 + riverNoise, logMax)
+                   * smoothstep(4.0 + riverNoise, 6.5 + riverNoise, logAvg)
+                   * isFlat * slopeMask;
     let riverColor = vec3f(0.06, 0.22, 0.55);
     terrain_color  = mix(terrain_color, riverColor, riverBlend * 0.92);
 
@@ -448,8 +406,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let riverSpec  = pow(max(dot(riverRefl, V), 0.0), 96.0) * 2.8 * dayFactor * rawShadow * specGate;
     color += riverSpec * vec3f(1.64, 1.27, 0.99) * dayFactor;
 
+    let lakeFill   = smoothstep(6.0, 8.0, logMax) * isFlat * 0.15;
     let sheenColor = vec3f(0.02, 0.18, 0.52);
-    color          = color + sheenColor * riverBlend * 0.12 * dayFactor;
+    color          = color + sheenColor * (riverBlend * 0.12 + lakeFill) * dayFactor;
 
     let shore_dist  = clamp(h_rel, 0.0, 1.0e9);
     let shore_blend = (1.0 - smoothstep(0.0, 35.0, shore_dist)) * mix(0.08, 0.55, dayFactor);

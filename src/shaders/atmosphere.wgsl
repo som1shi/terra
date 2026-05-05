@@ -155,7 +155,7 @@ const CLOUD_SIGMA_S : f32 = 0.0025;
 
 fn cloudSampleDensity(wp: vec3f) -> f32 {
     let h    = clamp((wp.y - CLOUD_BASE) / (CLOUD_TOP - CLOUD_BASE), 0.0, 1.0);
-    let prof = smoothstep(0.0, 0.12, h) * smoothstep(1.0, 0.75, h);
+    let prof = smoothstep(0.0, 0.12, h) * (1.0 - smoothstep(0.75, 1.0, h));
     if (prof < 0.001) { return 0.0; }
 
     let drift = vec3f(globals.timeOfDay * 80.0, 0.0, globals.timeOfDay * 40.0);
@@ -192,7 +192,7 @@ fn renderStars(dir: vec3f, nightFac: f32) -> vec3f {
     let frac  = fract(uv);
 
     let gal_pole  = normalize(vec3f(0.41, 0.20, 0.89));
-    let in_band   = smoothstep(0.30, 0.0, abs(dot(dir, gal_pole)));
+    let in_band   = 1.0 - smoothstep(0.0, 0.30, abs(dot(dir, gal_pole)));
     let threshold = mix(0.002, 0.018, in_band);
 
     var col = vec3f(0.0);

@@ -58,8 +58,12 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let onEdge     = uv.x <= TEXEL_SIZE * 2.0 || uv.x >= 1.0 - TEXEL_SIZE * 2.0 ||
                      uv.y <= TEXEL_SIZE * 2.0 || uv.y >= 1.0 - TEXEL_SIZE * 2.0;
     let edgeFactor = select(0.0, 1.0, onEdge);
-    let snapFactor = max(edgeFactor, 1.0 - smoothstep(snapThresh - 3.0, snapThresh + 3.0, h));
-    let y          = mix(h, globals.seaLevel - 30.0, snapFactor);
+    let snapFactor  = max(edgeFactor, 1.0 - smoothstep(snapThresh - 3.0, snapThresh + 3.0, h));
+    let beachLevel  = globals.seaLevel + 2.0;
+    let aboveSea    = h - globals.seaLevel;
+    let beachPull   = smoothstep(22.0, 0.0, aboveSea) * (1.0 - snapFactor) * (1.0 - edgeFactor);
+    let h_beached   = mix(h, beachLevel, beachPull * 0.55);
+    let y           = mix(h_beached, globals.seaLevel - 30.0, snapFactor);
     let world_pos  = vec3f(in.xz.x, y, in.xz.y);
 
     out.clip_pos  = globals.viewProj * vec4f(world_pos, 1.0);
@@ -220,11 +224,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let NdotL     = max(dot(N, sunDir), 0.0);
     let rawShadow = getSoftShadow(in.world_pos, sunDir);
 
-    let sun_term = NdotL * vec3f(1.64, 1.27, 0.99)
-                 * pow(vec3f(rawShadow), vec3f(1.0, 1.2, 1.5)) * dayFactor;
+    let beachGate    = smoothstep(22.0, 50.0, h_smooth - globals.seaLevel);
+    let shadowTint   = mix(vec3f(rawShadow), pow(vec3f(rawShadow), vec3f(1.0, 1.2, 1.5)), beachGate);
+    let sun_term     = NdotL * vec3f(1.64, 1.27, 0.99) * shadowTint * dayFactor * beachGate;
+    let beach_amb    = vec3f(0.92) * dayFactor * (1.0 - beachGate);
 
     let ind_dir  = normalize(sunDir * vec3f(-1.0, 0.0, -1.0));
-    let ind_term = max(dot(N, ind_dir), 0.0) * vec3f(0.40, 0.28, 0.20) * dayFactor;
+    let ind_term = max(dot(N, ind_dir), 0.0) * vec3f(0.18, 0.13, 0.09) * dayFactor;
 
     let moonDir       = globals.moonDir;
     let moonIntensity = globals.moonIntensity;
@@ -234,7 +240,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let night_amb = vec3f(0.004, 0.005, 0.010) * moonIntensity
                   + vec3f(0.0003, 0.0003, 0.0009);
 
-    let sky_term = (0.5 + 0.5 * N.y) * vec3f(0.16, 0.20, 0.28) * dayFactor
+    let sky_term = (0.5 + 0.5 * N.y) * vec3f(0.11, 0.13, 0.16) * dayFactor
                  + (0.5 + 0.5 * N.y) * night_amb * (1.0 - dayFactor);
 
     let hbao        = textureSampleLevel(aoTex, aoSampler, uv, 0.0).r;
@@ -242,7 +248,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
 
     let altitude = clamp(h_smooth / HEIGHT_SCALE, 0.0, 1.0);
     let slope    = 1.0 - N_b.y;
-    let seaLine  = globals.seaLevel / HEIGHT_SCALE;
 
     let triGrass = getTriplanarColor(in.world_pos, N_b,
                        vec3f(0.15, 0.25, 0.08), vec3f(0.22, 0.35, 0.16), 1.0 / 55.0);
@@ -270,23 +275,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     let dirtColor  = triDirt  * mix(0.85, 1.10, dNoise);
     let rockColor  = triRock  * mix(0.80, 1.20, rNoise);
 
-    let coastNoise  = (multiNoise(in.world_pos.xz * 0.003) - 0.5) * 30.0
-                    + (valueNoise(in.world_pos.xz * 0.01)  - 0.5) * 14.0;
-    let coastThresh = globals.seaLevel + 30.0 + coastNoise;
-    let coastBlend  = smoothstep(-12.0, 12.0, h_smooth - coastThresh);
-    let h_rel       = mix(-30.0, h_smooth - globals.seaLevel, coastBlend);
+    let h_rel       = h_smooth - globals.seaLevel;
     let shoreN      = multiNoise(in.world_pos.xz * 0.006) * 10.0 - 5.0;
     let sandNight   = mix(vec3f(0.08, 0.07, 0.06), sand, dayFactor);
 
     let beachNoise  = multiNoise(in.world_pos.xz * 0.002);
-    let isBeach     = smoothstep(0.35, 0.55, beachNoise);
-    let beachCol    = mix(deepWater, sandNight,
-                          smoothstep(-12.0, 8.0, h_rel + shoreN));
+    let cliffHeight = smoothstep(30.0, 80.0, h_rel);
+    let flatness    = 1.0 - smoothstep(0.20, 0.45, slope) * cliffHeight;
+    let isBeach     = smoothstep(0.30, 0.55, beachNoise) * flatness;
+    let beachCol    = mix(sandNight * 0.55, sandNight,
+                          smoothstep(-5.0, 20.0, h_rel + shoreN));
     let rockyCol    = mix(deepWater, rockColor * 0.7,
                           smoothstep(-5.0, 10.0, h_rel));
     let waterSand   = mix(rockyCol, beachCol, isBeach);
     var terrain_color = mix(waterSand, grassColor,
-                            smoothstep(3.0, 22.0, h_rel));
+                            smoothstep(22.0, 50.0, h_rel));
     terrain_color     = mix(terrain_color, dirtColor,
                             smoothstep(0.18 + jitter, 0.40 + jitter, altitude));
     terrain_color     = mix(terrain_color, rockColor,
@@ -294,7 +297,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
 
     let slope_cliff = smoothstep(0.15 + jitter * 0.3, 0.42 + jitter * 0.3, slope);
     let snap_cliff  = smoothstep(4.0, 16.0, h_smooth - in.world_pos.y);
-    terrain_color   = mix(terrain_color, rockColor, max(slope_cliff, snap_cliff));
+    terrain_color   = mix(terrain_color, rockColor, max(slope_cliff, snap_cliff) * cliffHeight);
 
     let snow_alt  = smoothstep(0.52, 0.66, altitude + jitter * 0.30);
     let snow_flat = smoothstep(0.72, 0.88, N_b.y);
@@ -329,7 +332,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
 
     let cliffMask  = max(snap_cliff, slope_cliff);
     let flowGate   = smoothstep(2.2, 4.5, logMax);
-    let wfStrength = cliffMask * flowGate * (1.0 - isFlat);
+    let seaGate    = smoothstep(20.0, 70.0, in.world_pos.y - globals.seaLevel);
+    let wfStrength = cliffMask * flowGate * (1.0 - isFlat) * seaGate;
 
     if (wfStrength > 0.01) {
         let time = globals.time;
@@ -388,30 +392,29 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
         terrain_color = terrain_color + wfSpec * vec3f(1.64, 1.27, 0.99) * dayFactor * wfStrength * gated * 0.5;
     }
 
-    let t    = uv;
     let ts   = TEXEL_SIZE * 4.0;
-    let h_c  = textureLoad(heightmapTex, vec2i(t * 512.0), 0).r;
-    let h_px = textureLoad(heightmapTex, vec2i((t + vec2f( ts, 0.0)) * 512.0), 0).r;
-    let h_nx = textureLoad(heightmapTex, vec2i((t + vec2f(-ts, 0.0)) * 512.0), 0).r;
-    let h_py = textureLoad(heightmapTex, vec2i((t + vec2f(0.0,  ts)) * 512.0), 0).r;
-    let h_ny = textureLoad(heightmapTex, vec2i((t + vec2f(0.0, -ts)) * 512.0), 0).r;
+    let h_c  = textureLoad(heightmapTex, vec2i(uv * 512.0), 0).r;
+    let h_px = textureLoad(heightmapTex, vec2i((uv + vec2f( ts, 0.0)) * 512.0), 0).r;
+    let h_nx = textureLoad(heightmapTex, vec2i((uv + vec2f(-ts, 0.0)) * 512.0), 0).r;
+    let h_py = textureLoad(heightmapTex, vec2i((uv + vec2f(0.0,  ts)) * 512.0), 0).r;
+    let h_ny = textureLoad(heightmapTex, vec2i((uv + vec2f(0.0, -ts)) * 512.0), 0).r;
     let h_avg      = (h_px + h_nx + h_py + h_ny) * 0.25;
     let crevice_ao = clamp(1.0 - 2.5 * max(0.0, h_avg - h_c), 0.4, 1.0);
 
-    var color = terrain_color * (sun_term + sky_term * hbao_factor + ind_term * hbao_factor + moon_term * hbao_factor) * crevice_ao;
+    var color = terrain_color * (sun_term + beach_amb + sky_term * hbao_factor + ind_term * hbao_factor * beachGate + moon_term * hbao_factor) * crevice_ao;
 
     let V          = normalize(globals.cameraPos - in.world_pos);
     let riverRefl  = reflect(-sunDir, N);
     let specGate   = smoothstep(0.25, 0.65, riverBlend);
     let riverSpec  = pow(max(dot(riverRefl, V), 0.0), 96.0) * 2.8 * dayFactor * rawShadow * specGate;
-    color += riverSpec * vec3f(1.64, 1.27, 0.99) * dayFactor;
+    color += riverSpec * vec3f(1.64, 1.27, 0.99) * dayFactor * beachGate;
 
     let lakeFill   = smoothstep(6.0, 8.0, logMax) * isFlat * 0.15;
     let sheenColor = vec3f(0.02, 0.18, 0.52);
-    color          = color + sheenColor * (riverBlend * 0.12 + lakeFill) * dayFactor;
+    color          = color + sheenColor * (riverBlend * 0.05 + lakeFill * 0.4) * dayFactor * beachGate;
 
     let shore_dist  = clamp(h_rel, 0.0, 1.0e9);
-    let shore_blend = (1.0 - smoothstep(0.0, 35.0, shore_dist)) * mix(0.08, 0.55, dayFactor);
+    let shore_blend = (1.0 - smoothstep(0.0, 35.0, shore_dist)) * mix(0.08, 0.55, dayFactor) * beachGate;
     color           = mix(color, vec3f(0.04, 0.10, 0.22) * max(dayFactor, 0.1), shore_blend);
 
     let rd        = normalize(in.world_pos - globals.cameraPos);

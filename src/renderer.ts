@@ -87,7 +87,7 @@ export class Renderer {
 
     this.ui.setStatus('Building terrain mesh...', 75);
 
-    this.terrain = new Terrain(this.device, HDR_FORMAT, heightmapTex, this.globalsBuffer, erosion.getSmoothedAccumTex());
+    this.terrain = new Terrain(this.device, HDR_FORMAT, heightmapTex, this.globalsBuffer, erosion.getSmoothedAccumTex(), erosion.getAccumTex());
     await this.terrain.init();
 
     this.ocean = new Ocean(this.device, HDR_FORMAT, this.globalsBuffer, 4);

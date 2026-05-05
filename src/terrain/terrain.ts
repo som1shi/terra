@@ -24,6 +24,7 @@ export class Terrain {
     private heightmapTex: GPUTexture,
     private globalsBuffer: GPUBuffer,
     private accumTex: GPUTexture,
+    private rawAccumTex: GPUTexture,
   ) {}
 
   async init(): Promise<void> {
@@ -39,6 +40,8 @@ export class Terrain {
       label: 'Normal Map Sampler',
       magFilter: 'linear',
       minFilter: 'linear',
+      mipmapFilter: 'linear',
+      maxAnisotropy: 16,
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge',
     });
@@ -47,6 +50,8 @@ export class Terrain {
       label: 'AO Sampler',
       magFilter: 'linear',
       minFilter: 'linear',
+      mipmapFilter: 'linear',
+      maxAnisotropy: 16,
       addressModeU: 'clamp-to-edge',
       addressModeV: 'clamp-to-edge',
     });
@@ -63,7 +68,8 @@ export class Terrain {
       label: 'Normal Map',
       size: { width: 512, height: 512 },
       format: 'rgba16float',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+      mipLevelCount: 10,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
     });
 
     const bgl = this.device.createBindGroupLayout({
@@ -88,7 +94,7 @@ export class Terrain {
       layout: bgl,
       entries: [
         { binding: 0, resource: this.heightmapTex.createView() },
-        { binding: 1, resource: this.normalTex.createView() },
+        { binding: 1, resource: this.normalTex.createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
       ],
     });
 
@@ -99,6 +105,7 @@ export class Terrain {
     pass.dispatchWorkgroups(64, 64);
     pass.end();
     this.device.queue.submit([encoder.finish()]);
+    this.generateMipmaps(this.normalTex, 'rgba16float', 10);
   }
 
   private computeAO(): void {
@@ -106,7 +113,8 @@ export class Terrain {
       label: 'HBAO Texture',
       size: { width: 512, height: 512 },
       format: 'rgba16float',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+      mipLevelCount: 10,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
     });
 
     const bgl = this.device.createBindGroupLayout({
@@ -131,7 +139,7 @@ export class Terrain {
       layout: bgl,
       entries: [
         { binding: 0, resource: this.heightmapTex.createView() },
-        { binding: 1, resource: this.aoTex.createView() },
+        { binding: 1, resource: this.aoTex.createView({ baseMipLevel: 0, mipLevelCount: 1 }) },
       ],
     });
 
@@ -141,6 +149,60 @@ export class Terrain {
     pass.setBindGroup(0, bg);
     pass.dispatchWorkgroups(64, 64);
     pass.end();
+    this.device.queue.submit([encoder.finish()]);
+    this.generateMipmaps(this.aoTex, 'rgba16float', 10);
+  }
+
+  private generateMipmaps(texture: GPUTexture, format: GPUTextureFormat, mipLevelCount: number): void {
+    const src = `
+      @group(0) @binding(0) var tex : texture_2d<f32>;
+      @group(0) @binding(1) var smp : sampler;
+      struct V { @builtin(position) p: vec4f, @location(0) uv: vec2f };
+      @vertex fn vs(@builtin(vertex_index) i: u32) -> V {
+        let u = f32((i << 1u) & 2u); let v = f32(i & 2u);
+        return V(vec4f(u*2.0-1.0, 1.0-v*2.0, 0.0, 1.0), vec2f(u, v));
+      }
+      @fragment fn fs(v: V) -> @location(0) vec4f {
+        return textureSampleLevel(tex, smp, v.uv, 0.0);
+      }
+    `;
+    const mod = this.device.createShaderModule({ label: 'Mip Blit', code: src });
+    const bgl = this.device.createBindGroupLayout({
+      label: 'Mip BGL',
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+      ],
+    });
+    const pipeline = this.device.createRenderPipeline({
+      label: 'Mip Pipeline',
+      layout: this.device.createPipelineLayout({ label: 'Mip Layout', bindGroupLayouts: [bgl] }),
+      vertex: { module: mod, entryPoint: 'vs' },
+      fragment: { module: mod, entryPoint: 'fs', targets: [{ format }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    const sampler = this.device.createSampler({ minFilter: 'linear', magFilter: 'linear' });
+
+    const encoder = this.device.createCommandEncoder({ label: 'Mip Encoder' });
+    for (let mip = 1; mip < mipLevelCount; mip++) {
+      const bg = this.device.createBindGroup({
+        layout: bgl,
+        entries: [
+          { binding: 0, resource: texture.createView({ baseMipLevel: mip - 1, mipLevelCount: 1 }) },
+          { binding: 1, resource: sampler },
+        ],
+      });
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: texture.createView({ baseMipLevel: mip, mipLevelCount: 1 }),
+          loadOp: 'clear', clearValue: [0, 0, 0, 0], storeOp: 'store',
+        }],
+      });
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bg);
+      pass.draw(3);
+      pass.end();
+    }
     this.device.queue.submit([encoder.finish()]);
   }
 
@@ -206,6 +268,7 @@ export class Terrain {
         { binding: 5, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 6, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
         { binding: 7, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 8, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
       ],
     });
 
@@ -250,6 +313,7 @@ export class Terrain {
         { binding: 5, resource: this.aoTex.createView() },
         { binding: 6, resource: this.aoSampler },
         { binding: 7, resource: this.accumTex.createView() },
+        { binding: 8, resource: this.rawAccumTex.createView() },
       ],
     });
   }

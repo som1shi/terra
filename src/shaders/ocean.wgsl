@@ -131,7 +131,7 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     let ambient = deepBlue * (0.015 + 0.285 * dayFactor + 0.10 * moonIntensity) * (1.0 - fresnel);
 
     let sunColorDay  = vec3f(1.4, 1.2, 0.9);
-    let sunColorDawn = vec3f(1.5, 0.6, 0.2);
+    let sunColorDawn = vec3f(1.3, 0.9, 0.6);
     let sunColor     = mix(sunColorDawn, sunColorDay,
                            smoothstep(0.0, 0.2, sunElevation)) * dayFactor;
     let refl_sun = reflect(-sunDir, N_vec);
